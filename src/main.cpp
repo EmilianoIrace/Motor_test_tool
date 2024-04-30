@@ -27,6 +27,7 @@ void setup() {
 
 void loop() {
   int period = 1E6 / frequency; // Calculate the period of the pulse in microseconds
+  while(true){
   SettingPWM();
   digitalWrite(Solenoid, LOW); // Turn the output pin ON
   delay(10);
@@ -47,15 +48,15 @@ void loop() {
   delay(800);
   
   // Stop generating pulses after numPulses
-  Serial.print("Done");
-  while (true) {
-    delay(500); // Wait for 1 second
-    digitalWrite(LED, HIGH); // Turn the output pin ON
-    delay(500); // Wait for 1 second
-    digitalWrite(LED, LOW); // Turn the output pin OFF
+  // while (true) {
+  //   delay(500); // Wait for 1 second
+  //   digitalWrite(LED, HIGH); // Turn the output pin ON
+  //   delay(500); // Wait for 1 second
+  //   digitalWrite(LED, LOW); // Turn the output pin OFF
 
-  }  // Empty loop to halt execution
-  
+  // }  // Empty loop to halt execution
+  digitalToggle(LED);
+}
 }
 
 void SettingPWM(void)   {
@@ -79,33 +80,25 @@ void SettingPWM(void)   {
   }
   dutyCycle=0;
   delay(40);
-  while(true){
-    while(!Serial.available());
-    dutyCycle_1=Serial.read();
-    delay(10);
-    while(Serial.available()){
-      Serial.read();
-    }
-    Serial.write(dutyCycle_1);
-    delay(10);
 
-    while(!Serial.available());
-    dutyCycle_2=Serial.read();
-    delay(10);
-
-    Serial.write(dutyCycle_2);
-    delay(10);
-    dutyCycle = (dutyCycle_1-'0')*10 + dutyCycle_2-'0';
-    comm_value=Serial.read();
-    if (comm_value=='5'){
-      comm_value=Serial.read();
-      if(comm_value=='2'){
-        comm_value=Serial.read();
-        if (comm_value=='3')
-          break;
-    }
+  while(!Serial.available());
+  dutyCycle_1=Serial.read();
+  delay(10);
+  while(Serial.available()){
+    Serial.read();
   }
-  while (true) {
+  Serial.write(dutyCycle_1);
+  delay(10);
+
+  while(!Serial.available());
+  dutyCycle_2=Serial.read();
+  delay(10);
+
+  Serial.write(dutyCycle_2);
+  delay(10);
+  dutyCycle = (dutyCycle_1-'0')*10 + dutyCycle_2-'0';
+
+
   pulses=0;
   while(!Serial.available());
   pulses_1=Serial.read();
@@ -124,33 +117,4 @@ void SettingPWM(void)   {
   delay(10);
   pulses = (pulses_1-'0')*10 + pulses_2-'0';
 
-  comm_value=Serial.read();
-    if (comm_value=='5'){
-      comm_value=Serial.read();
-      if(comm_value=='2'){
-        comm_value=Serial.read();
-        if (comm_value=='3')
-          break;
-    }
-    }
   }
-  }
-  
-  // Serial.print(dutyCycle);
-  // Serial.print("%");
-  // Serial.print("\n");
-  // Serial.print("Period: ");
-  // Serial.print(period);
-  // Serial.print(" microseconds");
-  // Serial.print("\n");
-  // Serial.print("Number of pulses: ");
-  // Serial.print("\n");
-  // Serial.parseInt();
-  // delay(10);
-  // while (!Serial.available()) {
-  //   numPulses = Serial.parseInt();
-  // }
-  // Serial.print(numPulses);
-  // Serial.print(" pulses");
-  // Serial.print("\n");
-}
