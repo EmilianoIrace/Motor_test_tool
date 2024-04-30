@@ -69,11 +69,11 @@ void SettingPWM(void)   {
     }
   }
 
-  while(comm_value!='1'){
+  while(comm_value!='2'){
 
     Serial.write('9');
-    Serial.write('1');
-    Serial.write('3');
+    // Serial.write('2');
+    // Serial.write('3');
     while(!Serial.available());
     comm_value=Serial.read();
     delay(10);
@@ -115,6 +115,6 @@ void SettingPWM(void)   {
 
   Serial.write(pulses_2);
   delay(10);
-  pulses = (pulses_1-'0')*10 + pulses_2-'0';
+  pulses = ((pulses_1-'0')*10 + pulses_2-'0')*2.5E2;
 
   }

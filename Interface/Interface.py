@@ -56,13 +56,14 @@ if ser.is_open:
             ser.write(bytes("9", 'utf-8'))
         time.sleep(0.1)
         if received_data == "9":
-            received_data = read_int()
-            if received_data == "1":
-                received_data = read_int()
-                if received_data == "3":
-                    ser.write(bytes("1", 'utf-8'))
-                    ser.flush()
-                    break
+            # received_data = read_int()
+            # if received_data == "2":
+            #     received_data = read_int()
+            #     if received_data == "3":
+            #         ser.write(bytes("2", 'utf-8'))
+            #         ser.flush()
+            ser.write(bytes("2", 'utf-8'))
+            break
     print("Connection established")
     
 else:
