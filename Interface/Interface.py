@@ -81,26 +81,19 @@ if int(duty)< int("10"):
     duty = "0"+duty
 dutyCycle=0
 
-while (True):
-    
-    time.sleep(0.02)
-    ser.write(bytes(duty[0], 'utf-8'))
-    dutyCycle = int(read_int())*10
-    time.sleep(0.02)
+time.sleep(0.02)
+ser.write(bytes(duty[0], 'utf-8'))
+dutyCycle = int(read_int())*10
+time.sleep(0.02)
 
-    ser.write(bytes(duty[1], 'utf-8'))
-    time.sleep(0.02)
+ser.write(bytes(duty[1], 'utf-8'))
+time.sleep(0.02)
 
-    dutyCycle += int(read_int())
-    
-    time.sleep(0.02)
+dutyCycle += int(read_int())
 
-    if(int(duty) != dutyCycle):
-        ser.write(bytes("5", 'utf-8'))
-        ser.write(bytes("2", 'utf-8'))
-        ser.write(bytes("5", 'utf-8'))
-    else:
-        break
+time.sleep(0.02)
+
+
 pulses= str(input("Enter the number of pulses: "))
 
 if int(pulses)>=int("100"):
@@ -109,22 +102,19 @@ if int(pulses)>=int("100"):
 if int(pulses)<int("10"):
     pulses = "0"+pulses
 N_pulses=0
-while (True):
-    ser.write(bytes(pulses[1], 'utf-8'))
-    N_pulses = int(read_int())*10
-    time.sleep(0.02)
 
-    ser.write(bytes(pulses[0], 'utf-8'))
-    time.sleep(0.02)
+ser.write(bytes(pulses[0], 'utf-8'))
+N_pulses = int(read_int())*10
+time.sleep(0.02)
 
-    N_pulses += int(read_int())
-    time.sleep(0.02)
+ser.write(bytes(pulses[1], 'utf-8'))
+time.sleep(0.02)
 
-    if(int(pulses) == N_pulses):
-        ser.write(bytes("5", 'utf-8'))
-        ser.write(bytes("2", 'utf-8'))
-        ser.write(bytes("5", 'utf-8'))
-        break
+N_pulses += int(read_int())
+time.sleep(0.02)
+
+
+        
 
 print(f"Duty is: {dutyCycle}")
 print(f"Pulses are: {N_pulses}")
