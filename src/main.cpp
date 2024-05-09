@@ -45,6 +45,7 @@
 #define SOL_DEG_PWM 8
 #define SOL_ON_PWM 20
 #define MOTOR_UI 4
+#define BUTTON 22
 
 
 // put function declarations here:
@@ -60,6 +61,7 @@ void setup() {
   // pinMode(SOL_DEG_EN, OUTPUT);
   // pinMode(SOL_DEG_PWM, OUTPUT);
   pinMode(SOL_ON_PWM, OUTPUT);
+  pinMode(BUTTON, INPUT);
   // for (int i = 0; i < 22; i++) {
   //   pinMode(i, OUTPUT);
   // }
@@ -81,21 +83,23 @@ void loop() {
 
 // PWM is 0-255, means 0 to 100% duty cycle, example 50 is 20% duty cycle (The formula is PWM/255 * 100%)
 // Durata is in ms, example 1000 is 1 second
-
-  for(int PWM = 50; PWM < 250; PWM += 40) {
-    for (int durata = 100; durata < 2000; durata += 200) {
-      
+  int build_up = 2000;
+  for(int PWM = 50; PWM < 255; PWM += 20) {
+      while(digitalRead(BUTTON) == LOW) {
+        delay(10);
+      }
+      delay(3000);
       digitalWrite(SOL_ON_EN, LOW);
       digitalWrite(SOL_ON_PWM, LOW);
       analogWrite(MOTOR_PWM, PWM);
-      delay(durata);
+      delay(build_up);
       analogWrite(MOTOR_PWM, 0);
       digitalWrite(SOL_ON_EN, HIGH);
       digitalWrite(SOL_ON_PWM, HIGH);
       delay(200);
       digitalWrite(SOL_ON_EN, LOW);
       digitalWrite(SOL_ON_PWM, LOW);
-    }
+
   }
 
 
