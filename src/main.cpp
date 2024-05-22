@@ -47,9 +47,20 @@
 #define MOTOR_UI 4
 #define BUTTON 22
 
+int Build_up_swing[18] = {196, 254, 252, 260, 314, 300, 379, 354, 340, 238, 332, 370, 456, 532, 592, 694, 800, 854}; // first 9 are Stimulation, Last 9 are Expression
+int PWM_swing[18] = {40, 46, 50, 56, 62, 68, 72, 78, 84, 36, 40, 46, 48, 54, 58, 62, 66, 70}; // first 9 are Stimulation, Last 9 are Expression
+// int Build_up_[18] = {};
+// int PWM_[18] = {};
+// int Build_up_[18] = {};
+// int PWM_[18] = {};
+// int Build_up_[18] = {};
+
+int *Build_up = Build_up_swing;
+int *PWM = PWM_swing;
 
 // put function declarations here:
 int myFunction(int, int);
+int myPWM(int, int, int);
 
 
 void setup() {
@@ -83,28 +94,41 @@ void loop() {
 
 // PWM is 0-255, means 0 to 100% duty cycle, example 50 is 20% duty cycle (The formula is PWM/255 * 100%)
 // Durata is in ms, example 1000 is 1 second
-  int build_up = 2000;
-  for(int PWM = 50; PWM < 255; PWM += 20) {
+
+  delay(10);
+  for(int i = 0; i < 17; i += 1) {
       while(digitalRead(BUTTON) == LOW) {
         delay(10);
       }
       delay(3000);
+      // analogWrite(MOTOR_PWM, (1.5/4*255)); // We need to apply 1.5V for 35ms
       digitalWrite(SOL_ON_EN, LOW);
       digitalWrite(SOL_ON_PWM, LOW);
-      analogWrite(MOTOR_PWM, PWM);
-      delay(build_up);
-      analogWrite(MOTOR_PWM, 0);
-      digitalWrite(SOL_ON_EN, HIGH);
-      digitalWrite(SOL_ON_PWM, HIGH);
+      // delay(35);
+      myPWM(35, (1.5/4*255), 20);
+      myPWM(Build_up[i]-35, PWM[i]*255/100, 20);
+
+      digitalWrite(SOL_ON_EN, LOW);
+      digitalWrite(SOL_ON_PWM, LOW);
       delay(200);
       digitalWrite(SOL_ON_EN, LOW);
       digitalWrite(SOL_ON_PWM, LOW);
 
   }
 
-
-
-
+  // while(1){
+  //     delay(1000);
+  //     digitalWrite(SOL_ON_EN, LOW);
+  //     digitalWrite(SOL_ON_PWM, LOW);
+  //     analogWrite(MOTOR_PWM, PWM);
+  //     delay(build_up);
+  //     analogWrite(MOTOR_PWM, 0);
+  //     digitalWrite(SOL_ON_EN, HIGH);
+  //     digitalWrite(SOL_ON_PWM, HIGH);
+  //     delay(200);
+  //     digitalWrite(SOL_ON_EN, LOW);
+  //     digitalWrite(SOL_ON_PWM, LOW);
+  //   }
   // digitalWrite(MOTOR_PWM, LOW);
   // digitalWrite(MOTOR_UI, LOW);
   
@@ -133,11 +157,16 @@ void loop() {
 
 }
 
-// put function definitions here:
-int CloseSol(int timeMs) {
-  digitalWrite(SOL_ON_EN, HIGH);
-  digitalWrite(SOL_ON_PWM, HIGH);
-  delay(timeMs);
-  digitalWrite(SOL_ON_EN, HIGH);
-  digitalWrite(SOL_ON_PWM, HIGH);
+int myPWM(int durationMs, int PWM, int frequencyKhz) {
+  int periodUs = 1E3/frequencyKhz;
+  int onTime = periodUs * PWM / 255;
+  int offTime = periodUs - onTime;
+  int cycles = durationMs*1E3 / periodUs;
+  for (int i = 0; i < cycles; i++) {
+    digitalWrite(MOTOR_PWM, HIGH);
+    nrf_delay_us(onTime);
+    digitalWrite(MOTOR_PWM, LOW);
+    nrf_delay_us(offTime);
+  }
+  return 1;
 }
