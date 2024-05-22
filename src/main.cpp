@@ -49,11 +49,11 @@
 
 int pump_mode = 0; // 0 is swing, 1 is solo
 
-int Build_up_swing[18] = {196, 254, 252, 260, 314, 300, 379, 354, 340, 238, 332, 370, 456, 532, 592, 694, 800, 854}; // first 9 are Stimulation, Last 9 are Expression
+int Build_up_swing[18] = {210, 240, 274, 282, 304, 324, 340, 352, 334, 240, 318, 392, 478, 568, 658, 722, 822, 898}; // first 9 are Stimulation, Last 9 are Expression
 int PWM_swing[18] = {40, 46, 50, 56, 62, 68, 72, 78, 84, 36, 40, 46, 48, 54, 58, 62, 66, 70}; // first 9 are Stimulation, Last 9 are Expression
 
-int Build_up_solo[18] = {19, 25, 25, 260, 314, 300, 379, 354, 340, 238, 332, 370, 456, 532, 592, 694, 800, 854}; // first 9 are Stimulation, Last 9 are Expression
-int PWM_solo[18] = {40, 46, 50, 56, 62, 68, 72, 78, 84, 36, 40, 46, 48, 54, 58, 62, 66, 70}; // first 9 are Stimulation, Last 9 are Expression
+int Build_up_solo[18] = {196, 254, 254, 260, 314, 300, 379, 354, 340, 238, 332, 370, 456, 532, 592, 694, 800, 854}; // first 9 are Stimulation, Last 9 are Expression
+int PWM_solo[18] = {26, 30, 32, 34, 38, 40, 42, 44, 46, 26, 28, 30, 32, 36, 38, 40, 42}; // first 9 are Stimulation, Last 9 are Expression
 
 // int Build_up_[18] = {};
 // int PWM_[18] = {};
