@@ -47,8 +47,14 @@
 #define MOTOR_UI 4
 #define BUTTON 22
 
+int pump_mode = 0; // 0 is swing, 1 is solo
+
 int Build_up_swing[18] = {196, 254, 252, 260, 314, 300, 379, 354, 340, 238, 332, 370, 456, 532, 592, 694, 800, 854}; // first 9 are Stimulation, Last 9 are Expression
 int PWM_swing[18] = {40, 46, 50, 56, 62, 68, 72, 78, 84, 36, 40, 46, 48, 54, 58, 62, 66, 70}; // first 9 are Stimulation, Last 9 are Expression
+
+int Build_up_solo[18] = {19, 25, 25, 260, 314, 300, 379, 354, 340, 238, 332, 370, 456, 532, 592, 694, 800, 854}; // first 9 are Stimulation, Last 9 are Expression
+int PWM_solo[18] = {40, 46, 50, 56, 62, 68, 72, 78, 84, 36, 40, 46, 48, 54, 58, 62, 66, 70}; // first 9 are Stimulation, Last 9 are Expression
+
 // int Build_up_[18] = {};
 // int PWM_[18] = {};
 // int Build_up_[18] = {};
@@ -94,12 +100,35 @@ void loop() {
 
 // PWM is 0-255, means 0 to 100% duty cycle, example 50 is 20% duty cycle (The formula is PWM/255 * 100%)
 // Durata is in ms, example 1000 is 1 second
-
+  int counter=0;
   delay(10);
   for(int i = 0; i < 17; i += 1) {
       while(digitalRead(BUTTON) == LOW) {
         delay(10);
       }
+      counter=0;
+      while(digitalRead(BUTTON) == HIGH) {
+        delay(100);
+        counter+=1;
+        if (counter > 10) {
+          if(pump_mode == 0) {
+            pump_mode = 1;
+          } else {
+            pump_mode = 0;
+          }
+          i=0;
+          break;
+        }
+      }
+
+      if (pump_mode == 0) {
+        Build_up = Build_up_swing;
+        PWM = PWM_swing;
+      } else {
+        Build_up = Build_up_solo;
+        PWM = PWM_solo;
+      }
+
       delay(3000);
       // analogWrite(MOTOR_PWM, (1.5/4*255)); // We need to apply 1.5V for 35ms
       digitalWrite(SOL_ON_EN, LOW);
