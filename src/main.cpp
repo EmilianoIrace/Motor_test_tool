@@ -134,7 +134,7 @@ void loop() {
       digitalWrite(SOL_ON_EN, LOW);
       digitalWrite(SOL_ON_PWM, LOW);
       // delay(35);
-      for (int j = -40; j <= 40; j=j+10) {
+      for (int j = -30; j <= 30; j=j+10) {
       myPWM(35, (1.5/4*255), 20);
       myPWM(int((Build_up[i]-35)*(1+j/1000.0)), PWM[i]*255/100, 20);
       delay(50);
