@@ -102,7 +102,7 @@ void loop() {
 // Durata is in ms, example 1000 is 1 second
   int counter=0;
   delay(10);
-  for(int i = 0; i < 17; i += 1) {
+  for(int i = 0; i <= 17; i += 1) {
       while(digitalRead(BUTTON) == LOW) {
         delay(10);
       }
@@ -129,20 +129,21 @@ void loop() {
         PWM = PWM_solo;
       }
 
-      delay(3000);
+      delay(500);
       // analogWrite(MOTOR_PWM, (1.5/4*255)); // We need to apply 1.5V for 35ms
       digitalWrite(SOL_ON_EN, LOW);
       digitalWrite(SOL_ON_PWM, LOW);
       // delay(35);
+      for (int j = -40; j <= 40; j=j+10) {
       myPWM(35, (1.5/4*255), 20);
-      myPWM(Build_up[i]-35, PWM[i]*255/100, 20);
-
+      myPWM(int((Build_up[i]-35)*(1+j/1000.0)), PWM[i]*255/100, 20);
+      delay(50);
+      digitalWrite(SOL_ON_EN, HIGH);
+      digitalWrite(SOL_ON_PWM, HIGH);
+      delay(500);
       digitalWrite(SOL_ON_EN, LOW);
       digitalWrite(SOL_ON_PWM, LOW);
-      delay(200);
-      digitalWrite(SOL_ON_EN, LOW);
-      digitalWrite(SOL_ON_PWM, LOW);
-
+      }
   }
 
   // while(1){
