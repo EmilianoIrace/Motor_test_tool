@@ -102,48 +102,51 @@ void loop() {
 // Durata is in ms, example 1000 is 1 second
   int counter=0;
   delay(10);
-  for(int i = 0; i <= 17; i += 1) {
-      while(digitalRead(BUTTON) == LOW) {
-        delay(10);
-      }
-      counter=0;
-      while(digitalRead(BUTTON) == HIGH) {
-        delay(100);
-        counter+=1;
-        if (counter > 10) {
-          if(pump_mode == 0) {
-            pump_mode = 1;
-          } else {
-            pump_mode = 0;
-          }
-          i=0;
-          break;
+  while(1){
+    for(int i = 0; i <= 17; i += 1) {
+        while(digitalRead(BUTTON) == LOW) {
+          delay(10);
         }
-      }
+        counter=0;
+        while(digitalRead(BUTTON) == HIGH) {
+          delay(100);
+          counter+=1;
+          if (counter > 10) {
+            if(pump_mode == 0) {
+              pump_mode = 1;
+            } else {
+              pump_mode = 0;
+            }
+            i=0;
+            break;
+          }
+        }
 
-      if (pump_mode == 0) {
-        Build_up = Build_up_swing;
-        PWM = PWM_swing;
-      } else {
-        Build_up = Build_up_solo;
-        PWM = PWM_solo;
-      }
+        if (pump_mode == 0) {
+          Build_up = Build_up_swing;
+          PWM = PWM_swing;
+        } else {
+          Build_up = Build_up_solo;
+          PWM = PWM_solo;
+        }
 
-      delay(500);
-      // analogWrite(MOTOR_PWM, (1.5/4*255)); // We need to apply 1.5V for 35ms
-      digitalWrite(SOL_ON_EN, LOW);
-      digitalWrite(SOL_ON_PWM, LOW);
-      // delay(35);
-      for (int j = -30; j <= 30; j=j+10) {
-      myPWM(35, (1.5/4*255), 20);
-      myPWM(int((Build_up[i]-35)*(1+j/1000.0)), PWM[i]*255/100, 20);
-      delay(50);
-      digitalWrite(SOL_ON_EN, HIGH);
-      digitalWrite(SOL_ON_PWM, HIGH);
-      delay(500);
-      digitalWrite(SOL_ON_EN, LOW);
-      digitalWrite(SOL_ON_PWM, LOW);
-      }
+        delay(500);
+        // analogWrite(MOTOR_PWM, (1.5/4*255)); // We need to apply 1.5V for 35ms
+        digitalWrite(SOL_ON_EN, LOW);
+        digitalWrite(SOL_ON_PWM, LOW);
+        // delay(35);
+        for (int j = -120; j <= 120; j=j+40) {
+        myPWM(35, (1.5/4*255), 20);
+        myPWM(int((Build_up[i]-35)*(1+j/1000.0)), PWM[i]*255/100, 20);
+        delay(50);
+        digitalWrite(SOL_ON_EN, HIGH);
+        digitalWrite(SOL_ON_PWM, HIGH);
+        delay(400);
+        digitalWrite(SOL_ON_EN, LOW);
+        digitalWrite(SOL_ON_PWM, LOW);
+        }
+      } 
+    }
   }
 
   // while(1){
@@ -182,10 +185,6 @@ void loop() {
   // digitalWrite(i, LOW);
   // }
 
-  while(1);
-
-
-}
 
 int myPWM(int durationMs, int PWM, int frequencyKhz) {
   int periodUs = 1E3/frequencyKhz;
