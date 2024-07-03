@@ -51,8 +51,9 @@
 int pump_mode = 1; // 0 is swing, 1 is solo
 int debug_mode = 1;
 int Build_up_debug = 845;
-int PWM_debug = 70;
-
+int PWM_debug = 70; // PWM_debug : 255 = Voltage_desired : 4.1V => PWM_debug = Voltage_desired * 255 / 4.1V
+int RPM_TestBench_inPWMmode =1;
+int pause=0;
 // int pump_mode = 0; // 0 is swing, 1 is solo
 // int debug_mode =0;
 // int debug_start = 0;
@@ -66,6 +67,7 @@ int PWM_swing[18] = {40, 46, 50, 56, 62, 68, 72, 78, 84, 36, 40, 46, 48, 54, 58,
 //int Build_up_solo[18] = {196, 254, 254, 260, 314, 300, 379, 354, 340, 238, 332, 370, 456, 532, 592, 694, 800, 854}; // first 9 are Stimulation, Last 9 are Expression
 int Build_up_solo[18] = {250, 245, 254, 285, 290, 280, 320, 340, 360, 260, 392, 522, 682, 630, 725, 555, 710, 870}; // first 9 are Stimulation, Last 9 are Expression
 int PWM_solo[18] = {26, 30, 32, 34, 38, 40, 42, 44, 46, 26, 28, 30, 32, 36, 38, 40, 42, 46}; // first 9 are Stimulation, Last 9 are Expression
+
 
 
 // int Build_up_[18] = {};
@@ -82,23 +84,19 @@ int myFunction(int, int);
 int myPWM(int, int, int,int);
 
 
+
 void setup() {
   // put your setup code here, to run once:
 
   pinMode(MOTOR_PWM, OUTPUT);
   pinMode(MOTOR_UI, OUTPUT);
+  if (RPM_TestBench_inPWMmode == 0) {
+ 
   pinMode(SOL_ON_EN, OUTPUT);
-  // pinMode(SOL_DEG_EN, OUTPUT);
-  // pinMode(SOL_DEG_PWM, OUTPUT);
   pinMode(SOL_ON_PWM, OUTPUT);
+  }
   pinMode(BUTTON, INPUT);
-  // for (int i = 0; i < 22; i++) {
-  //   pinMode(i, OUTPUT);
-  // }
 
-  
-  // put your setup code here, to run once:
-  // pinMode(MOTOR_PWM, OUTPUT);
 }
 
 void loop() {
@@ -113,12 +111,14 @@ void loop() {
 
 // PWM is 0-255, means 0 to 100% duty cycle, example 50 is 20% duty cycle (The formula is PWM/255 * 100%)
 // Durata is in ms, example 1000 is 1 second
+
   int counter=0;
   int j=0;
   delay(10);
   while(1){
 
-    if (debug_mode == 1) {
+    if (debug_mode == 1 and RPM_TestBench_inPWMmode == 0) {
+        
         digitalWrite(SOL_ON_EN, HIGH);
         for (int i = 0; i <= 10; i++) {
         delay(100);
@@ -147,7 +147,7 @@ void loop() {
         digitalWrite(SOL_ON_EN, LOW);
         digitalWrite(SOL_ON_PWM, LOW);
 
-    } else 
+    } else if(RPM_TestBench_inPWMmode == 0 )
     {
     for(int i = 0; i <= 17; i += 1) {
         while(digitalRead(BUTTON) == LOW) {
@@ -193,9 +193,35 @@ void loop() {
         }
       } 
     }
+
+    else if (RPM_TestBench_inPWMmode == 1)
+    {
+      if(digitalRead(BUTTON) == HIGH){
+        if (pause==1)
+          pause=0;
+        else
+          pause=1;
+        while(digitalRead(BUTTON) == HIGH) {
+          
+            delay(10);
+        }
+      }
+
+
+      if (pause == 0)
+          myPWM(10, PWM_debug, 20, MOTOR_PWM);
+      else 
+      {
+          digitalWrite(MOTOR_PWM, LOW);
+          delay(10);
+      }
+    }
+    else
+    {
+      delay(1000);
     }
   }
-
+}
   // while(1){
   //     delay(1000);
   //     digitalWrite(SOL_ON_EN, LOW);
