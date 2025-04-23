@@ -1,55 +1,43 @@
 import pyshark
 from collections import Counter
 
-def analyze_pcapng(file_path):
-    cap = pyshark.FileCapture(file_path, display_filter='eth')
+def analyze_bluetooth_pcapng(file_path):
+    cap = pyshark.FileCapture(file_path, display_filter='bluetooth')
 
-    mac_src_counter = Counter()
-    mac_dst_counter = Counter()
+    bt_addr_src_counter = Counter()
+    bt_addr_dst_counter = Counter()
     protocols_counter = Counter()
 
     security_flags = {
-        "unencrypted_http": 0,
-        "ftp_usage": 0,
-        "telnet_usage": 0,
-        "arp_spoofing": 0,
-        "broadcast_traffic": 0,
-        "dns_unencrypted": 0,
+        "unencrypted_bt_traffic": 0,
+        "unknown_devices": 0,
+        "pairing_requests": 0,
     }
+
+    known_devices = set()  # Populate this with known Bluetooth addresses
 
     for pkt in cap:
         try:
-            # Extract MAC addresses
-            src_mac = pkt.eth.src
-            dst_mac = pkt.eth.dst
-            mac_src_counter[src_mac] += 1
-            mac_dst_counter[dst_mac] += 1
+            # Extract Bluetooth addresses
+            src_addr = pkt.bluetooth.src
+            dst_addr = pkt.bluetooth.dst
+            bt_addr_src_counter[src_addr] += 1
+            bt_addr_dst_counter[dst_addr] += 1
+
+            # Check if addresses are known
+            if src_addr not in known_devices or dst_addr not in known_devices:
+                security_flags["unknown_devices"] += 1
 
             # Protocol detection
-            if 'HTTP' in pkt:
-                protocols_counter['HTTP'] += 1
-                security_flags["unencrypted_http"] += 1
+            if 'BTATT' in pkt:
+                protocols_counter['ATT'] += 1
+            if 'BTSMP' in pkt:
+                protocols_counter['SMP'] += 1
+                security_flags["pairing_requests"] += 1
 
-            if 'FTP' in pkt:
-                protocols_counter['FTP'] += 1
-                security_flags["ftp_usage"] += 1
-
-            if 'TELNET' in pkt:
-                protocols_counter['TELNET'] += 1
-                security_flags["telnet_usage"] += 1
-
-            if 'ARP' in pkt and pkt.arp.opcode == '2':
-                protocols_counter['ARP'] += 1
-                security_flags["arp_spoofing"] += 1
-
-            if 'DNS' in pkt:
-                protocols_counter['DNS'] += 1
-                if 'TCP' not in pkt and 'TLS' not in pkt:
-                    security_flags["dns_unencrypted"] += 1
-
-            # Check for broadcast
-            if dst_mac == 'ff:ff:ff:ff:ff:ff':
-                security_flags["broadcast_traffic"] += 1
+            # Check for unencrypted traffic
+            if 'BTLE' in pkt and hasattr(pkt, 'btle') and pkt.btle.encrypted == '0':
+                security_flags["unencrypted_bt_traffic"] += 1
 
         except AttributeError:
             continue
@@ -66,8 +54,8 @@ def analyze_pcapng(file_path):
         safety_rating = "High Risk"
 
     report = {
-        'MAC Addresses Source': dict(mac_src_counter),
-        'MAC Addresses Destination': dict(mac_dst_counter),
+        'Bluetooth Addresses Source': dict(bt_addr_src_counter),
+        'Bluetooth Addresses Destination': dict(bt_addr_dst_counter),
         'Protocols Detected': dict(protocols_counter),
         'Security Issues Found': security_flags,
         'Overall Safety Rating': safety_rating
@@ -77,7 +65,7 @@ def analyze_pcapng(file_path):
 
 # Example usage
 if __name__ == "__main__":
-    filepath = "example.pcapng"
-    results = analyze_pcapng(filepath)
+    filepath = "bluetooth_example.pcapng"
+    results = analyze_bluetooth_pcapng(filepath)
     for category, info in results.items():
         print(f"\n{category}:\n{info}")
