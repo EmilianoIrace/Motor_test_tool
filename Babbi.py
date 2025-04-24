@@ -1205,6 +1205,8 @@ class BluetoothSecurityAnalyzer:
             "devices": {},
             "overall_findings": {
                 "devices_with_smp_detected": len(self.smp_protocol_detected),
+                "devices_with_att_detected": len(self.att_protocol_detected),
+                "devices_with_l2cap_detected": len(self.l2cap_protocol_detected),
                 "devices_with_encryption": sum(1 for _, info in self.devices.items() if info.get('encryption_enabled', False)),
                 "total_devices": len(self.devices)
             }
@@ -1406,6 +1408,8 @@ def main():
                 'Encryption Status',
                 'Security Level (0-4)', 
                 'SMP Protocol',
+                'ATT Protocol',
+                'L2CAP Protocol',
                 'Key Exchange',
                 'Security Assessment',
                 'Security Issues'
@@ -1419,6 +1423,12 @@ def main():
                 
                 # Check if device address is in SMP detected set
                 smp_detected = addr in analyzer.smp_protocol_detected
+                
+                # Check if device address is in ATT detected set
+                att_detected = addr in analyzer.att_protocol_detected
+                
+                # Check if device address is in L2CAP detected set
+                l2cap_detected = addr in analyzer.l2cap_protocol_detected
                 
                 # Create more human-readable output values
                 connection_type = "Not Connected"
@@ -1464,6 +1474,8 @@ def main():
                     encryption_status,
                     device['security_level'],
                     "Detected" if smp_detected else "Not Detected",
+                    "Detected" if att_detected else "Not Detected",
+                    "Detected" if l2cap_detected else "Not Detected",
                     key_exchange_str,
                     security_assessment,
                     security_issues
