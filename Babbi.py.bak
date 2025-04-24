@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-import logging
-import sys
 import argparse
+import sys
+import os
+import logging
+import re
+import binascii
+import json
+import csv
 from collections import defaultdict, Counter
 from datetime import datetime
 from protocol_decoder_functions import (
@@ -1070,7 +1075,7 @@ class BluetoothSecurityAnalyzer:
         if hasattr(packet, 'bluetooth'):
             if hasattr(packet.bluetooth, 'src_bd_addr'):
                 return packet.bluetooth.src_bd_addr
-            if hasattr(packet.bluetooth, 'dst_bd_addr'):
+            if hasattr(packet, 'bluetooth', 'dst_bd_addr'):
                 return packet.bluetooth.dst_bd_addr
         
         if hasattr(packet, 'btle'):
@@ -1104,10 +1109,10 @@ class BluetoothSecurityAnalyzer:
                 if 'addr' in field.lower() and not field.startswith('_'):
                     try:
                         value = getattr(layer, field)
-                        if ':' in str(value) and len(str(value)) >= 12:
+                        if isinstance(value, str) and ':' in value and len(value.split(':')) == 6:
                             return value
                     except Exception:
-                        continue
+                        pass
         
         return None
     
@@ -1118,22 +1123,14 @@ class BluetoothSecurityAnalyzer:
                 # Check for known vulnerable versions
                 if protocol == "BTL2CAP" and version < "0x08":  # L2CAP v8 introduced better security
                     for addr in self.devices:
-                        if self.devices[addr].get('l2cap_detected', False):
-                            self._register_vulnerability(
-                                f"Using vulnerable L2CAP version {version}",
-                                addr,
-                                severity=4
-                            )
+                        self._register_vulnerability(f"Using outdated {protocol} version {version}", 
+                                                  addr, severity=3)
                 
                 # BLE 4.0/4.1 have known issues
                 if protocol == "BTLE" and version in ["4.0", "4.1"]:
                     for addr in self.devices:
-                        if self.devices[addr].get('att_detected', False):
-                            self._register_vulnerability(
-                                f"Using vulnerable BLE version {version}",
-                                addr,
-                                severity=3
-                            )
+                        self._register_vulnerability(f"Using BLE {version} with known vulnerabilities", 
+                                                  addr, severity=3)
     
     def save_report(self, filename):
         """Save report to JSON file"""
@@ -1786,7 +1783,7 @@ def main():
                                     }
                                     opcode = packet.btsmp.opcode.replace('0x', '')
                                     if opcode in smp_opcodes:
-                                        protocol_info = smp_opcodes[opcode]
+                                        protocol_info = f"SMP {smp_opcodes[opcode]}"
                                     else:
                                         protocol_info = f"SMP Opcode: {opcode}"
                                 else:
@@ -1843,6 +1840,7 @@ def main():
                 
                 writer.writerow([
                     packet_num,
+                    packet_details.get```python
                     packet_details.get('timestamp', event.get('timestamp', '')),
                     packet_details.get('source', event.get('device_mac', '')),
                     packet_details.get('destination', ''),
@@ -1861,4 +1859,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
+```
