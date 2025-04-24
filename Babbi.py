@@ -1466,7 +1466,86 @@ class BluetoothSecurityAnalyzer:
                     logger.warning(f"Firmware updates for {addr} appear to be unencrypted (confidence: {confidence}%)")
         
         return self.firmware_update_encryption
-
+    
+    def generate_authentication_summary(self):
+        """Generate a summary of authentication and pairing status for all devices"""
+        summary = {
+            'overall_findings': {
+                'total_devices': len(self.devices),
+                'devices_with_smp_detected': len(self.smp_protocol_detected),
+                'devices_with_encryption': sum(1 for d in self.devices.values() if d.get('encryption_enabled', False)),
+                'devices_without_pairing': sum(1 for d in self.devices.values() if not d.get('smp_detected', False)),
+                'devices_without_encryption': sum(1 for d in self.devices.values() if not d.get('encryption_enabled', False))
+            },
+            'devices': {}
+        }
+        
+        # Analyze each device
+        for addr, device_info in self.devices.items():
+            device_summary = {
+                'device_name': device_info.get('device_name', 'Unknown Device'),
+                'connection_established': False,
+                'pairing_established': False,
+                'encryption_enabled': device_info.get('encryption_enabled', False),
+                'security_level': 0,  # 0-4 scale
+                'connection_phases': {},
+                'pairing_phases': {},
+                'key_exchange': {
+                    'ltk_exchanged': False,
+                    'irk_exchanged': False,
+                    'csrk_exchanged': False
+                },
+                'security_issues': []
+            }
+            
+            # Check connection phases
+            if addr in self.connection_phases:
+                conn_phases = self.connection_phases[addr]
+                device_summary['connection_established'] = any(
+                    conn_phases.get(phase, False) for phase in 
+                    ['connection_request', 'connection_complete']
+                )
+                device_summary['connection_phases'] = {
+                    phase: conn_phases.get(phase, False) 
+                    for phase in ['advertisement', 'scan_request', 'scan_response', 
+                                'connection_request', 'connection_complete']
+                }
+            
+            # Check pairing phases
+            if addr in self.pairing_phases:
+                pair_phases = self.pairing_phases[addr]
+                device_summary['pairing_established'] = pair_phases.get('pairing_confirm', False)
+                device_summary['pairing_phases'] = {
+                    phase: pair_phases.get(phase, False)
+                    for phase in ['security_request', 'pairing_request', 'pairing_response', 'key_distribution']
+                }
+                
+                # Check key exchange status
+                device_summary['key_exchange']['ltk_exchanged'] = pair_phases.get('ltk_exchanged', False)
+                device_summary['key_exchange']['irk_exchanged'] = pair_phases.get('irk_exchanged', False)
+                device_summary['key_exchange']['csrk_exchanged'] = pair_phases.get('csrk_exchanged', False)
+            
+            # Calculate security level
+            if device_info.get('encryption_enabled', False):
+                if pair_phases.get('mitm_protection', False) if addr in self.pairing_phases else False:
+                    device_summary['security_level'] = 4  # Authenticated pairing with encryption
+                else:
+                    device_summary['security_level'] = 3  # Unauthenticated pairing with encryption
+            elif device_summary['pairing_established']:
+                device_summary['security_level'] = 2  # Pairing but no encryption
+            elif device_summary['connection_established']:
+                device_summary['security_level'] = 1  # Connected but no pairing
+            
+            # Collect security issues
+            device_issues = [v for v in self.vulnerabilities if v['device'] == addr]
+            device_summary['security_issues'] = [
+                {'severity': issue['severity'], 'issue': issue['description']}
+                for issue in device_issues
+            ]
+            
+            summary['devices'][addr] = device_summary
+        
+        return summary
 
 def main():
     """Command-line interface for Bluetooth Security Analyzer"""
@@ -1927,7 +2006,7 @@ def main():
             
             # Write events to CSV with more detailed information
             for event in relevant_events:
-                packet_num = event.get('packet_num', 'unknown')
+                packet_num = event.get('packet_no', 'unknown')
                 packet_details = packet_info_cache.get(packet_num, {})
                 
                 # Determine protocol type based on packet info or event phase
