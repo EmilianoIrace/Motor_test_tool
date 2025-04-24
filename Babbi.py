@@ -73,6 +73,10 @@ class BluetoothSecurityAnalyzer:
         self.smp_packets = {}    # Detailed SMP packet information
         self.att_packets = {}    # Detailed ATT packet information
         
+        # Enhanced security tracking
+        self.e2e_encryption_detected = set()  # Set of devices with end-to-end encryption
+        self.firmware_update_encryption = {}  # Track firmware update encryption status
+        
     def analyze(self):
         """Main analysis function"""
         try:
@@ -1276,113 +1280,192 @@ class BluetoothSecurityAnalyzer:
             'timestamp': getattr(packet, 'sniff_timestamp', None),
             'packet_num': packet_num
         })
-
-
-    def generate_authentication_summary(self):
-        """Generate a summary report focusing on the authentication and pairing process"""
-        summary = {
-            "devices": {},
-            "overall_findings": {
-                "devices_with_smp_detected": len(self.smp_protocol_detected),
-                "devices_with_att_detected": len(self.att_protocol_detected),
-                "devices_with_l2cap_detected": len(self.l2cap_protocol_detected),
-                "devices_with_encryption": sum(1 for _, info in self.devices.items() if info.get('encryption_enabled', False)),
-                "total_devices": len(self.devices)
-            }
-        }
-        
-        # Analyze each device's authentication process
+    
+    def _identify_e2e_encryption(self):
+        """
+        Detect end-to-end (application layer) encryption in Bluetooth communications
+        This is distinct from link-layer encryption handled by the BLE protocol
+        """
         for addr, device_info in self.devices.items():
-            device_summary = {
-                "device_name": device_info.get('device_name', 'Unknown Device'),
-                "mac_address": addr,
-                "packet_count": device_info.get('packet_count', 0),
-                "connection_established": False,
-                "pairing_established": False,
-                "encryption_enabled": device_info.get('encryption_enabled', False),
-                "security_level": 0,
-                "key_exchange": {
-                    "ltk_exchanged": False,
-                    "irk_exchanged": False,
-                    "csrk_exchanged": False
-                },
-                "connection_phases": {},
-                "pairing_phases": {},
-                "security_issues": []
+            # Check if the device is already using link-layer encryption
+            if device_info.get('encryption_enabled', False):
+                # Now look for additional encryption indicators
+                
+                # Method 1: Look for SSL/TLS traffic associated with the device
+                if 'ssl_tls_version' in device_info:
+                    self.e2e_encryption_detected.add(addr)
+                    device_info['e2e_encryption'] = True
+                    logger.info(f"Detected E2E encryption via SSL/TLS for device {addr}")
+                
+                # Method 2: Look for encrypted payloads in GATT values
+                # Common patterns in encrypted data: high entropy, consistent headers, etc.
+                if 'gatt_operations' in device_info:
+                    encrypted_payload_indicators = 0
+                    total_payloads = 0
+                    
+                    # If we have ATT value samples, analyze them for encryption patterns
+                    if addr in self.att_packets and len(self.att_packets[addr]) > 5:
+                        for att_data in self.att_packets[addr]:
+                            if 'value' in att_data:
+                                total_payloads += 1
+                                value = att_data['value']
+                                
+                                # Check for high entropy (characteristic of encrypted data)
+                                # Simple check: variety of byte values and lack of text patterns
+                                try:
+                                    if isinstance(value, str) and len(value) > 16:
+                                        # Convert hex string to bytes if needed
+                                        if all(c in '0123456789abcdefABCDEF' for c in value):
+                                            try:
+                                                value_bytes = bytes.fromhex(value)
+                                            except ValueError:
+                                                value_bytes = value.encode('utf-8')
+                                        else:
+                                            value_bytes = value.encode('utf-8')
+                                        
+                                        # Count unique bytes as a rough entropy measure
+                                        unique_bytes = len(set(value_bytes))
+                                        if unique_bytes > len(value_bytes) * 0.7:  # High unique byte ratio
+                                            encrypted_payload_indicators += 1
+                                except Exception:
+                                    pass
+                        
+                        # If most payloads have encryption indicators
+                        if total_payloads > 0 and (encrypted_payload_indicators / total_payloads) > 0.7:
+                            self.e2e_encryption_detected.add(addr)
+                            device_info['e2e_encryption'] = True
+                            logger.info(f"Detected E2E encryption via payload analysis for device {addr}")
+                
+                # Method 3: Look for encryption handshake patterns in application data
+                if 'large_data_transfers' in device_info:
+                    # Check for characteristic patterns like key exchange
+                    # For example, initial small packets (key exchange) followed by larger encrypted data
+                    transfer_sizes = [t['size'] for t in device_info['large_data_transfers']]
+                    if len(transfer_sizes) > 3:
+                        # Pattern: small packets then consistently sized larger packets
+                        if min(transfer_sizes[:2]) < 64 and max(transfer_sizes[2:]) > 128:
+                            if len(set(s // 16 for s in transfer_sizes[2:])) < 3:  # Consistent block sizes
+                                self.e2e_encryption_detected.add(addr)
+                                device_info['e2e_encryption'] = True
+                                logger.info(f"Detected E2E encryption via transfer patterns for device {addr}")
+            
+            # If we still haven't found E2E encryption but device has SMP with MITM protection
+            # it could be using application-layer encryption not detected above
+            if addr not in self.e2e_encryption_detected and addr in self.pairing_phases:
+                if self.pairing_phases[addr].get('mitm_protection', False) and \
+                   self.pairing_phases[addr].get('ltk_exchanged', False) and \
+                   device_info.get('encryption_key_size', 0) >= 16:
+                    
+                    # High security connection might indicate E2E security too
+                    device_info['potential_e2e_encryption'] = True
+                    logger.info(f"Potential E2E encryption for high-security device {addr}")
+        
+        return self.e2e_encryption_detected
+    
+    def _verify_firmware_update_encryption(self):
+        """
+        Verify if firmware updates are encrypted and track findings 
+        This provides deeper inspection than the basic firmware detection
+        """
+        for addr, device_info in self.devices.items():
+            # Initialize tracking
+            self.firmware_update_encryption[addr] = {
+                'detected': False,
+                'encrypted': False,
+                'method': 'unknown',
+                'confidence': 0  # 0-100% confidence in assessment
             }
             
-            # Check connection establishment phases
-            if addr in self.connection_phases:
-                device_summary["connection_established"] = True
-                device_summary["connection_phases"] = {
-                    phase: self.connection_phases[addr].get(phase, False) 
-                    for phase in ['advertisement', 'scan_request', 'scan_response', 'connection_request', 'connection_complete']
-                }
+            # First check if firmware update activity was detected
+            has_dfu_service = device_info.get('has_dfu_service', False)
+            has_firmware_activity = 'firmware_activity' in device_info
+            has_large_transfers = 'large_data_transfers' in device_info and len(device_info.get('large_data_transfers', [])) > 3
             
-            # Check pairing process phases
-            if addr in self.pairing_phases:
-                pairing_info = self.pairing_phases[addr]
-                device_summary["pairing_phases"] = {
-                    phase: pairing_info.get(phase, False)
-                    for phase in ['security_request', 'pairing_request', 'pairing_response', 'key_distribution']
-                }
+            # If any update indicators are present
+            if has_dfu_service or has_firmware_activity or has_large_transfers:
+                self.firmware_update_encryption[addr]['detected'] = True
                 
-                # Determine if pairing was established
-                if pairing_info.get('pairing_request', False) and pairing_info.get('pairing_response', False):
-                    device_summary["pairing_established"] = True
+                # Start with base confidence based on evidence strength
+                confidence = 0
+                if has_dfu_service:
+                    confidence += 30
+                if has_firmware_activity:
+                    confidence += 40
+                if has_large_transfers:
+                    confidence += 30
                 
-                # Check for key exchange
-                device_summary["key_exchange"]["ltk_exchanged"] = pairing_info.get('ltk_exchanged', False)
-                device_summary["key_exchange"]["irk_exchanged"] = pairing_info.get('irk_exchanged', False)
-                device_summary["key_exchange"]["csrk_exchanged"] = pairing_info.get('csrk_exchanged', False)
+                # Now check for encryption
+                if device_info.get('encryption_enabled', False):
+                    # Link-layer encryption is enabled
+                    self.firmware_update_encryption[addr]['encrypted'] = True
+                    self.firmware_update_encryption[addr]['method'] = 'link-layer'
+                    confidence = min(confidence + 20, 100)
                 
-                # Determine security level (1-4)
-                if device_summary["pairing_established"]:
-                    if device_info.get('encryption_enabled', False):
-                        if pairing_info.get('mitm_protection', False):
-                            device_summary["security_level"] = 4  # Authenticated pairing with encryption
-                        else:
-                            device_summary["security_level"] = 3  # Unauthenticated pairing with encryption
-                    else:
-                        device_summary["security_level"] = 2  # Pairing without encryption
-                elif device_summary["connection_established"]:
-                    device_summary["security_level"] = 1  # Connection only, no pairing
-            
-            # Identify security issues
-            if device_summary["connection_established"] and not device_summary["pairing_established"]:
-                device_summary["security_issues"].append({
-                    "issue": "Connection without secure pairing",
-                    "severity": "High",
-                    "description": "Device establishes Bluetooth connection without secure pairing process, allowing unauthorized connections"
-                })
-            
-            if device_summary["connection_established"] and not device_summary["encryption_enabled"]:
-                device_summary["security_issues"].append({
-                    "issue": "Unencrypted communication",
-                    "severity": "Critical",
-                    "description": "Device communicates without encryption, exposing all data to eavesdropping"
-                })
-            
-            if addr in self.smp_protocol_detected:
-                if not device_summary["key_exchange"]["ltk_exchanged"]:
-                    device_summary["security_issues"].append({
-                        "issue": "SMP without LTK exchange",
-                        "severity": "High",
-                        "description": "Secure Manager Protocol detected but no Long Term Key exchanged"
-                    })
-            
-            # Add to the main summary
-            summary["devices"][addr] = device_summary
-            
-        # Generate overall findings
-        summary["overall_findings"]["devices_without_pairing"] = sum(
-            1 for d in summary["devices"].values() if d["connection_established"] and not d["pairing_established"]
-        )
-        summary["overall_findings"]["devices_without_encryption"] = sum(
-            1 for d in summary["devices"].values() if d["connection_established"] and not d["encryption_enabled"] 
-        )
+                # Check for application-layer encryption
+                if device_info.get('e2e_encryption', False) or device_info.get('potential_e2e_encryption', False):
+                    self.firmware_update_encryption[addr]['encrypted'] = True
+                    self.firmware_update_encryption[addr]['method'] = 'application-layer'
+                    confidence = min(confidence + 30, 100)
+                
+                # Additional checks for firmware-specific encryption patterns
+                if has_firmware_activity:
+                    # Check first few bytes of firmware data for encryption signatures
+                    # Common encryption headers include patterns like:
+                    # - AES uses 16 byte blocks with high entropy
+                    # - Some encrypted firmware includes specific headers
+                    encryption_indicators = 0
+                    
+                    for activity in device_info.get('firmware_activity', []):
+                        if 'data_sample' in activity and isinstance(activity['data_sample'], (bytes, bytearray)):
+                            sample = activity['data_sample']
+                            
+                            # Check for high entropy in the data (characteristic of encryption)
+                            if len(sample) >= 16:
+                                # Calculate simple entropy (count of unique bytes / total length)
+                                unique_bytes = len(set(sample[:64])) # Look at first 64 bytes
+                                entropy = unique_bytes / min(64, len(sample))
+                                
+                                if entropy > 0.7:  # High entropy suggests encryption
+                                    encryption_indicators += 1
+                    
+                    if encryption_indicators > 0:
+                        self.firmware_update_encryption[addr]['encrypted'] = True
+                        if self.firmware_update_encryption[addr]['method'] == 'unknown':
+                            self.firmware_update_encryption[addr]['method'] = 'content-analysis'
+                        confidence = min(confidence + 25, 100)
+                
+                # Look for OTA update services that specifically advertise encryption
+                if 'advertised_services' in device_info:
+                    secure_ota_uuids = [
+                        'fe59',   # Nordic Secure DFU
+                        '1530',   # Cypress Secure OTA
+                        'fef5'    # Dialog Semiconductor Secure Service
+                    ]
+                    
+                    for service in device_info.get('advertised_services', set()):
+                        service = service.lower()
+                        if any(uuid in service for uuid in secure_ota_uuids):
+                            self.firmware_update_encryption[addr]['encrypted'] = True
+                            self.firmware_update_encryption[addr]['method'] = 'secure-service'
+                            confidence = min(confidence + 40, 100)
+                
+                # Set final confidence level
+                self.firmware_update_encryption[addr]['confidence'] = confidence
+                
+                # Update device info with findings
+                device_info['firmware_update_encrypted'] = self.firmware_update_encryption[addr]['encrypted']
+                
+                # Log findings
+                if self.firmware_update_encryption[addr]['encrypted']:
+                    logger.info(f"Firmware updates for {addr} appear to be encrypted via {self.firmware_update_encryption[addr]['method']} " +
+                              f"(confidence: {confidence}%)")
+                else:
+                    # High severity vulnerability if firmware updates aren't encrypted
+                    self._register_vulnerability("Firmware updates not using encryption",
+                                               addr, severity=5)
+                    logger.warning(f"Firmware updates for {addr} appear to be unencrypted (confidence: {confidence}%)")
         
-        return summary
+        return self.firmware_update_encryption
 
 
 def main():
@@ -1833,15 +1916,18 @@ def main():
                                 'info': protocol_info,
                                 'timestamp': getattr(packet, 'sniff_timestamp', '')
                             }
-                    except Exception as e:
-                        logger.debug(f"Error caching packet info: {str(e)}")
+                    except Exception as e_inner:
+                        logger.debug(f"Error caching packet info: {str(e_inner)}")
                         continue
             except Exception as e:
-                logger.warning(f"Error reading capture file for detailed packet info: {str(e)}")
+                logger.error(f"Error processing packets for CSV output: {str(e)}")
+            finally:
+                if 'cap' in locals() and cap:
+                    cap.close()
             
             # Write events to CSV with more detailed information
             for event in relevant_events:
-                packet_num = event['packet_no']
+                packet_num = event.get('packet_num', 'unknown')
                 packet_details = packet_info_cache.get(packet_num, {})
                 
                 # Determine protocol type based on packet info or event phase
