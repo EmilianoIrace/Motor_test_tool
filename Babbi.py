@@ -46,12 +46,34 @@ class BluetoothSecurityAnalyzer:
         self.connection_phases = {}
         self.pairing_phases = {}
         self.smp_protocol_detected = set()  # Set of devices where SMP was detected
+        self.att_protocol_detected = set()  # Set of devices where ATT was detected
+        self.l2cap_protocol_detected = set()  # Set of devices where L2CAP was detected
         
     def analyze(self):
         """Main analysis function"""
         try:
             logger.info(f"Opening capture file: {self.pcap_file}")
             
+            # Try with explicit SMP filter first to ensure we catch all SMP protocol activity
+            smp_count = 0
+            logger.info("Looking for SMP protocol packets...")
+            try:
+                smp_cap = pyshark.FileCapture(self.pcap_file, display_filter="btsmp")
+                for packet in smp_cap:
+                    smp_count += 1
+                    device_mac = self._get_mac_from_packet(packet)
+                    if device_mac:
+                        logger.info(f"Found SMP packet for device: {device_mac}")
+                        self.smp_protocol_detected.add(device_mac)
+                        self._register_device(device_mac)
+                        self.devices[device_mac]['smp_detected'] = True
+                        # Process the SMP packet
+                        self._process_packet(packet)
+                logger.info(f"Found {smp_count} SMP protocol packets")
+            except Exception as e:
+                logger.warning(f"Error processing SMP packets: {str(e)}")
+            
+            # Continue with normal processing
             # Try different display filters to ensure we capture all Bluetooth traffic
             # Start with no filter to see all packets
             cap = pyshark.FileCapture(self.pcap_file)
@@ -174,12 +196,45 @@ class BluetoothSecurityAnalyzer:
                 if highest_layer not in self.protocol_samples:
                     self.protocol_samples[highest_layer] = []
                 self.protocol_samples[highest_layer].append(str(packet))
+            
+            # Specifically track SMP protocol usage
+            if highest_layer == 'BTSMP' or 'SMP' in highest_layer:
+                device_mac = self._get_mac_from_packet(packet)
+                if device_mac:
+                    self.smp_protocol_detected.add(device_mac)
+                    if device_mac in self.devices:
+                        self.devices[device_mac]['smp_detected'] = True
+            
+            # Specifically track ATT protocol usage
+            if highest_layer == 'BTATT' or 'ATT' in highest_layer:
+                device_mac = self._get_mac_from_packet(packet)
+                if device_mac:
+                    self.att_protocol_detected.add(device_mac)
+                    if device_mac in self.devices:
+                        self.devices[device_mac]['att_detected'] = True
+            
+            # Specifically track L2CAP protocol usage
+            if highest_layer == 'BTL2CAP' or 'L2CAP' in highest_layer:
+                device_mac = self._get_mac_from_packet(packet)
+                if device_mac:
+                    self.l2cap_protocol_detected.add(device_mac)
+                    if device_mac in self.devices:
+                        self.devices[device_mac]['l2cap_detected'] = True
         
         # Extract Bluetooth addresses from various layers
         for layer_name in dir(packet):
             if layer_name.startswith(('bthci', 'btatt', 'btsmp')):
                 layer = getattr(packet, layer_name)
                 self._extract_bt_info(layer, layer_name, timestamp)
+                
+                # Explicitly check for SMP layer
+                if layer_name == 'btsmp':
+                    # Make sure we record the device as having SMP
+                    device_mac = self._get_mac_from_packet(packet)
+                    if device_mac:
+                        self.smp_protocol_detected.add(device_mac)
+                        if device_mac in self.devices:
+                            self.devices[device_mac]['smp_detected'] = True
             
             # Look for protocol version information
             if hasattr(layer_name, 'version'):
@@ -557,6 +612,31 @@ class BluetoothSecurityAnalyzer:
         # Check for security-related information
         if layer_name == 'btsmp':
             self._extract_smp_info(layer)
+        elif layer_name == 'btatt':
+            # Track ATT protocol usage
+            addr = None
+            if hasattr(layer, 'src'):
+                addr = layer.src
+            elif hasattr(layer, 'dst'):
+                addr = layer.dst
+                
+            if addr:
+                self.att_protocol_detected.add(addr)
+                if addr in self.devices:
+                    self.devices[addr]['att_detected'] = True
+                    
+        elif layer_name == 'btl2cap':
+            # Track L2CAP protocol usage
+            addr = None
+            if hasattr(layer, 'src'):
+                addr = layer.src
+            elif hasattr(layer, 'dst'):
+                addr = layer.dst
+                
+            if addr:
+                self.l2cap_protocol_detected.add(addr)
+                if addr in self.devices:
+                    self.devices[addr]['l2cap_detected'] = True
         elif layer_name == 'bthci_evt' and hasattr(layer, 'code'):
             self._extract_hci_evt_info(layer)
         elif layer_name == 'bthci_cmd' and hasattr(layer, 'opcode'):
@@ -564,7 +644,7 @@ class BluetoothSecurityAnalyzer:
     
     def _extract_smp_info(self, layer):
         """Extract Security Manager Protocol information"""
-        # Get device address
+        # Get device address - try multiple methods to identify the device
         addr = None
         if hasattr(layer, 'bd_addr'):
             addr = layer.bd_addr
@@ -572,6 +652,9 @@ class BluetoothSecurityAnalyzer:
         # Add to SMP detected devices if we have an address
         if addr:
             self.smp_protocol_detected.add(addr)
+            # Ensure we record this in the device info too
+            if addr in self.devices:
+                self.devices[addr]['smp_detected'] = True
             
         # Identify SMP command code to track pairing process phases
         if hasattr(layer, 'opcode'):
@@ -948,6 +1031,15 @@ class BluetoothSecurityAnalyzer:
             if hasattr(packet.btl2cap, 'dst'):
                 return packet.btl2cap.dst
             
+        # Try to find MAC in the SMP layer
+        if hasattr(packet, 'btsmp'):
+            if hasattr(packet.btsmp, 'src'):
+                return packet.btsmp.src
+            if hasattr(packet.btsmp, 'dst'):
+                return packet.btsmp.dst
+            if hasattr(packet.btsmp, 'bd_addr'):
+                return packet.btsmp.bd_addr
+            
         # As a last resort, check any field that might contain a MAC
         for layer in packet.layers:
             for field in dir(layer):
@@ -956,7 +1048,7 @@ class BluetoothSecurityAnalyzer:
                         value = getattr(layer, field)
                         if isinstance(value, str) and ':' in value and len(value.split(':')) == 6:
                             return value
-                    except:
+                    except Exception:
                         pass
         
         return None
@@ -1326,8 +1418,7 @@ def main():
                                            for issue in device['security_issues']])
                 
                 # Check if device address is in SMP detected set
-                smp_detected = addr in auth_summary['overall_findings'].get('smp_protocol_detected', 
-                               analyzer.smp_protocol_detected)
+                smp_detected = addr in analyzer.smp_protocol_detected
                 
                 # Create more human-readable output values
                 connection_type = "Not Connected"
