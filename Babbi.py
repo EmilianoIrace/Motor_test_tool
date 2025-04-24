@@ -1,6 +1,3 @@
-I'll enhance the script to provide a deeper analysis of each identified MAC address, focusing on the security aspects you mentioned. Here's an updated version that adds detailed inspection of protocols, encryption, authentication mechanisms, and potential vulnerabilities:
-
-```python
 #!/usr/bin/env python3
 import pyshark
 import argparse
@@ -422,7 +419,7 @@ class BluetoothSecurityAnalyzer:
                 self.devices[device_mac]['has_dfu_service'] = True
     
     def _check_for_firmware_data(self, packet):
-        """Check packet data for signs of firmware updates"""
+        """Enhanced firmware update detection"""
         try:
             # Common firmware update signatures
             fw_signatures = [
@@ -444,37 +441,60 @@ class BluetoothSecurityAnalyzer:
                 except:
                     pass
             
-            if not data:
-                return
-                
-            # Look for firmware signatures
-            device_mac = None
-            for sig in fw_signatures:
-                if sig in data:
-                    # Try to identify device
-                    if hasattr(packet, 'bluetooth'):
-                        if hasattr(packet.bluetooth, 'src_bd_addr'):
-                            device_mac = packet.bluetooth.src_bd_addr
-                        elif hasattr(packet.bluetooth, 'dst_bd_addr'):
-                            device_mac = packet.bluetooth.dst_bd_addr
-                    elif hasattr(packet, 'btle'):
-                        if hasattr(packet.btle, 'advertising_address'):
-                            device_mac = packet.btle.advertising_address
+            if data:
+                # Look for firmware signatures
+                device_mac = None
+                for sig in fw_signatures:
+                    if sig in data:
+                        # Try to identify device
+                        if hasattr(packet, 'bluetooth'):
+                            if hasattr(packet.bluetooth, 'src_bd_addr'):
+                                device_mac = packet.bluetooth.src_bd_addr
+                            elif hasattr(packet.bluetooth, 'dst_bd_addr'):
+                                device_mac = packet.bluetooth.dst_bd_addr
+                        elif hasattr(packet, 'btle'):
+                            if hasattr(packet.btle, 'advertising_address'):
+                                device_mac = packet.btle.advertising_address
+                        
+                        if device_mac:
+                            if 'firmware_activity' not in self.devices[device_mac]:
+                                self.devices[device_mac]['firmware_activity'] = []
+                            
+                            self.devices[device_mac]['firmware_activity'].append({
+                                'signature': sig.hex() if isinstance(sig, bytes) else sig,
+                                'packet_num': getattr(packet, 'number', 'unknown'),
+                                'timestamp': getattr(packet, 'sniff_timestamp', None)
+                            })
+                            
+                            # Check if we can determine encryption status
+                            if not self.devices[device_mac].get('encryption_enabled', False):
+                                self._register_vulnerability("Potential unencrypted firmware update detected", 
+                                                          device_mac, severity=5)
+            
+            # Enhanced detection: Look for large data blocks (potential firmware chunks)
+            if hasattr(packet, 'btatt') and hasattr(packet.btatt, 'value'):
+                try:
+                    value_len = len(bytes.fromhex(packet.btatt.value))
+                    # Large chunks often signal firmware data
+                    if value_len > 128:  
+                        # Get the device
+                        device_mac = self._get_mac_from_packet(packet)
+                        if device_mac:
+                            if 'large_data_transfers' not in self.devices[device_mac]:
+                                self.devices[device_mac]['large_data_transfers'] = []
+                            
+                            self.devices[device_mac]['large_data_transfers'].append({
+                                'size': value_len,
+                                'packet_num': getattr(packet, 'number', 'unknown')
+                            })
+                            
+                            # Multiple large transfers suggest firmware updates
+                            if len(self.devices[device_mac]['large_data_transfers']) > 5:
+                                self._register_vulnerability("Possible firmware update detected via large data transfers", 
+                                                          device_mac, severity=3)
+                except Exception:
+                    pass
                     
-                    if device_mac:
-                        if 'firmware_activity' not in self.devices[device_mac]:
-                            self.devices[device_mac]['firmware_activity'] = []
-                        
-                        self.devices[device_mac]['firmware_activity'].append({
-                            'signature': sig.hex() if isinstance(sig, bytes) else sig,
-                            'packet_num': getattr(packet, 'number', 'unknown'),
-                            'timestamp': getattr(packet, 'sniff_timestamp', None)
-                        })
-                        
-                        # Check if we can determine encryption status
-                        if not self.devices[device_mac].get('encryption_enabled', False):
-                            self._register_vulnerability("Potential unencrypted firmware update detected", 
-                                                      device_mac, severity=5)
         except Exception:
             pass
     
@@ -700,5 +720,224 @@ class BluetoothSecurityAnalyzer:
         # Calculate final score (0-100)
         self.risk_score = min(100, (severity_sum / (severity_count * 5)) * 100 * (1 + device_factor))
     
+    def _assess_device_security(self, addr, device_info):
+        """Perform comprehensive security assessment for a device"""
+        assessment = {
+            "encryption_status": "Encrypted" if device_info.get("encryption_enabled", False) else "Unencrypted",
+            "pairing_security": "Unknown",
+            "protocol_security": [],
+            "recommendations": []
+        }
+        
+        # Pairing security assessment
+        if "pairing_method" in device_info:
+            io_cap = device_info["pairing_method"]
+            if io_cap in ["0x03", "3"]:
+                assessment["pairing_security"] = "Low (Just Works)"
+                assessment["recommendations"].append("Use a more secure pairing method with MITM protection")
+            elif io_cap in ["0x01", "1"]:
+                assessment["pairing_security"] = "Medium (Display Yes/No)"
+            elif io_cap in ["0x04", "4"]:
+                assessment["pairing_security"] = "High (Keyboard)"
+        
+        # Protocol security assessment
+        if not device_info.get("encryption_enabled", False):
+            assessment["recommendations"].append("Enable encryption for all communications")
+        
+        if device_info.get("encryption_key_size", 16) < 16:
+            assessment["recommendations"].append(f"Increase encryption key size from {device_info.get('encryption_key_size')} to 16 bytes")
+        
+        # Privacy assessment
+        if not device_info.get("uses_privacy", False):
+            assessment["recommendations"].append("Use private random address instead of public address")
+        
+        # Service security assessment
+        if "services" in device_info:
+            for service in device_info["services"]:
+                if any(s in service.lower() for s in ["1808", "1809", "1810", "183d"]):  # Health-related services
+                    if not device_info.get("encryption_enabled", False):
+                        assessment["recommendations"].append(f"Enable encryption for sensitive service {service}")
+        
+        return assessment
+    
     def generate_report(self):
-        """Generate analysis​​​​​​​​​​​​​​​​
+        """Generate comprehensive security analysis report"""
+        report = {
+            "summary": {
+                "devices_found": len(self.devices),
+                "vulnerabilities": len(self.vulnerabilities),
+                "risk_score": self.risk_score,
+                "packets_analyzed": self.packets_analyzed,
+                "protocols": dict(self.protocols),
+                "encryption_types": dict(self.encryption_types),
+                "authentication_methods": dict(self.auth_methods)
+            },
+            "devices": {},
+            "vulnerabilities": self.vulnerabilities,
+            "communication_map": {addr: list(comms) for addr, comms in self.communication_map.items()},
+            "security_events": self.security_events
+        }
+        
+        # Add per-device detailed analysis
+        for addr, device_info in self.devices.items():
+            # Filter out set objects for JSON serialization
+            device_report = {}
+            for key, value in device_info.items():
+                if isinstance(value, set):
+                    device_report[key] = list(value)
+                else:
+                    device_report[key] = value
+            
+            # Add device vulnerabilities
+            device_report["vulnerabilities"] = [
+                v for v in self.vulnerabilities if v["device"] == addr
+            ]
+            
+            # Add security assessment
+            device_report["security_assessment"] = self._assess_device_security(addr, device_info)
+            
+            report["devices"][addr] = device_report
+        
+        return report
+    
+    def _get_mac_from_packet(self, packet):
+        """Extract MAC address from a packet using various methods"""
+        # Try different ways to get MAC addresses from various layers
+        if hasattr(packet, 'bluetooth'):
+            if hasattr(packet.bluetooth, 'src_bd_addr'):
+                return packet.bluetooth.src_bd_addr
+            if hasattr(packet.bluetooth, 'dst_bd_addr'):
+                return packet.bluetooth.dst_bd_addr
+        
+        if hasattr(packet, 'btle'):
+            if hasattr(packet.btle, 'advertising_address'):
+                return packet.btle.advertising_address
+
+        if hasattr(packet, 'btatt'):
+            if hasattr(packet.btatt, 'src'):
+                return packet.btatt.src
+            if hasattr(packet.btatt, 'dst'):
+                return packet.btatt.dst
+
+        if hasattr(packet, 'btl2cap'):
+            if hasattr(packet.btl2cap, 'src'):
+                return packet.btl2cap.src
+            if hasattr(packet.btl2cap, 'dst'):
+                return packet.btl2cap.dst
+            
+        # As a last resort, check any field that might contain a MAC
+        for layer in packet.layers:
+            for field in dir(layer):
+                if 'addr' in field.lower() and not field.startswith('_'):
+                    try:
+                        value = getattr(layer, field)
+                        if isinstance(value, str) and ':' in value and len(value.split(':')) == 6:
+                            return value
+                    except:
+                        pass
+        
+        return None
+    
+    def _analyze_protocol_versions(self):
+        """Analyze Bluetooth protocol versions for vulnerabilities"""
+        for protocol, versions in self.protocol_versions.items():
+            for version, count in versions.items():
+                # Check for known vulnerable versions
+                if protocol == "BTL2CAP" and version < "0x08":  # L2CAP v8 introduced better security
+                    for addr in self.devices:
+                        self._register_vulnerability(f"Using outdated {protocol} version {version}", 
+                                                  addr, severity=3)
+                
+                # BLE 4.0/4.1 have known issues
+                if protocol == "BTLE" and version in ["4.0", "4.1"]:
+                    for addr in self.devices:
+                        self._register_vulnerability(f"Using BLE {version} with known vulnerabilities", 
+                                                  addr, severity=3)
+    
+    def save_report(self, filename):
+        """Save report to JSON file"""
+        import json
+        
+        report = self.generate_report()
+        
+        # Convert sets to lists for JSON serialization
+        for addr in report.get("devices", {}):
+            for key, value in report["devices"][addr].items():
+                if isinstance(value, set):
+                    report["devices"][addr][key] = list(value)
+        
+        with open(filename, 'w') as f:
+            json.dump(report, f, indent=4)
+        
+        logger.info(f"Report saved to {filename}")
+
+    @classmethod
+    def from_report(cls, filename):
+        """Create analyzer instance from a saved report"""
+        import json
+        
+        with open(filename, 'r') as f:
+            report = json.load(f)
+        
+        analyzer = cls("dummy.pcap")  # Create dummy instance
+        
+        # Populate with report data
+        analyzer.devices = report.get("devices", {})
+        analyzer.vulnerabilities = report.get("vulnerabilities", [])
+        analyzer.risk_score = report.get("summary", {}).get("risk_score", 0)
+        analyzer.packets_analyzed = report.get("summary", {}).get("packets_analyzed", 0)
+        
+        return analyzer
+
+
+def main():
+    """Command-line interface for Bluetooth Security Analyzer"""
+    parser = argparse.ArgumentParser(description="Bluetooth Security Analyzer")
+    parser.add_argument("pcap_file", help="Path to the PCAP file to analyze")
+    parser.add_argument("--output", "-o", help="Output file for JSON report", default="bt_security_report.json")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    args = parser.parse_args()
+    
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    analyzer = BluetoothSecurityAnalyzer(args.pcap_file)
+    analyzer.analyze()
+    
+    report = analyzer.generate_report()
+    
+    # Print summary to console
+    print("\n=== Bluetooth Security Analysis Summary ===")
+    print(f"Devices found: {report['summary']['devices_found']}")
+    print(f"Vulnerabilities: {report['summary']['vulnerabilities']}")
+    print(f"Risk score: {report['summary']['risk_score']:.2f}/100")
+    print(f"Packets analyzed: {report['summary']['packets_analyzed']}")
+    
+    print("\n=== Top Vulnerabilities ===")
+    for vuln in sorted(report['vulnerabilities'], key=lambda v: v['severity'], reverse=True)[:5]:
+        print(f"[Severity {vuln['severity']}] {vuln['description']} - Device: {vuln['device']}")
+    
+    # Save detailed report to file
+    analyzer.save_report(args.output)
+    print(f"\nDetailed report saved to {args.output}")
+
+    # Print device information
+    print("\n=== Device Information ===")
+    for addr, device in report['devices'].items():
+        print(f"\nDevice: {addr}")
+        if 'device_name' in device:
+            print(f"  Name: {device['device_name']}")
+        print(f"  Encryption: {device['security_assessment']['encryption_status']}")
+        print(f"  Pairing Security: {device['security_assessment']['pairing_security']}")
+        
+        if device['vulnerabilities']:
+            print(f"  Vulnerabilities: {len(device['vulnerabilities'])}")
+            
+        if device['security_assessment']['recommendations']:
+            print("  Security Recommendations:")
+            for rec in device['security_assessment']['recommendations']:
+                print(f"   - {rec}")
+
+
+if __name__ == "__main__":
+    main()
