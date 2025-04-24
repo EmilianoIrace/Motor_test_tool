@@ -1358,6 +1358,127 @@ def main():
         
         print(f"Authentication summary saved to {auth_output}")
         print(f"Authentication overview saved to {summary_output}")
+        
+        # Create a detailed packet-level CSV with authentication and pairing information
+        packets_output = args.output.replace('.json', '_auth_packets_detail.csv')
+        with open(packets_output, 'w', newline='') as f:
+            writer = csv.writer(f)
+            
+            # Write header row with Wireshark-like columns
+            writer.writerow([
+                'Packet No.',
+                'Time',
+                'Source',
+                'Destination', 
+                'Length',
+                'Protocol',
+                'Info',
+                'Device MAC',
+                'Authentication Phase',
+                'Key Type'
+            ])
+            
+            # Collect all relevant authentication and pairing packets
+            relevant_events = []
+            
+            # Add connection establishment events
+            for device_addr, phases in analyzer.connection_phases.items():
+                for phase, detected in phases.items():
+                    if phase != 'first_seen' and phase != 'packet_numbers' and detected:
+                        for packet_num in phases['packet_numbers'].get(phase, []):
+                            relevant_events.append({
+                                'packet_no': packet_num,
+                                'device_mac': device_addr,
+                                'phase': f'Connection: {phase.replace("_", " ").title()}',
+                                'key_type': ''
+                            })
+            
+            # Add pairing events
+            for device_addr, phases in analyzer.pairing_phases.items():
+                for phase, detected in phases.items():
+                    if phase not in ('first_seen', 'packet_numbers', 'ltk_exchanged', 'irk_exchanged', 
+                                    'csrk_exchanged', 'security_level', 'mitm_protection', 
+                                    'encryption_enabled', 'requested_security_level', 'pairing_confirm',
+                                    'oob_data', 'auth_requirements', 'responder_io_capability') and detected:
+                        for packet_num in phases['packet_numbers'].get(phase, []):
+                            relevant_events.append({
+                                'packet_no': packet_num,
+                                'device_mac': device_addr,
+                                'phase': f'Pairing: {phase.replace("_", " ").title()}',
+                                'key_type': ''
+                            })
+            
+            # Add key exchange events
+            for device_addr, phases in analyzer.pairing_phases.items():
+                if phases.get('ltk_exchanged', False):
+                    relevant_events.append({
+                        'packet_no': next(iter(phases['packet_numbers'].get('key_distribution', ['Unknown'])), 'Unknown'),
+                        'device_mac': device_addr,
+                        'phase': 'Key Exchange',
+                        'key_type': 'LTK (Long Term Key)'
+                    })
+                if phases.get('irk_exchanged', False):
+                    relevant_events.append({
+                        'packet_no': next(iter(phases['packet_numbers'].get('key_distribution', ['Unknown'])), 'Unknown'),
+                        'device_mac': device_addr,
+                        'phase': 'Key Exchange',
+                        'key_type': 'IRK (Identity Resolving Key)'
+                    })
+                if phases.get('csrk_exchanged', False):
+                    relevant_events.append({
+                        'packet_no': next(iter(phases['packet_numbers'].get('key_distribution', ['Unknown'])), 'Unknown'),
+                        'device_mac': device_addr,
+                        'phase': 'Key Exchange',
+                        'key_type': 'CSRK (Connection Signature Resolving Key)'
+                    })
+            
+            # Add all security events from analyzer
+            for event in analyzer.security_events:
+                if 'packet_num' in event and event['packet_num'] != 'unknown':
+                    if event['type'].startswith(('pairing_', 'connection_', 'ltk_exchange', 'irk_exchange', 'csrk_exchange')):
+                        # Extract phase from type
+                        phase = event['type'].replace('_', ' ').title()
+                        key_type = ''
+                        
+                        # Determine key type from event
+                        if 'ltk' in event['type']:
+                            key_type = 'LTK (Long Term Key)'
+                        elif 'irk' in event['type']:
+                            key_type = 'IRK (Identity Resolving Key)'
+                        elif 'csrk' in event['type']:
+                            key_type = 'CSRK (Connection Signature Resolving Key)'
+                        
+                        relevant_events.append({
+                            'packet_no': event['packet_num'],
+                            'device_mac': event['device'],
+                            'phase': phase,
+                            'key_type': key_type,
+                            'timestamp': event.get('timestamp', '')
+                        })
+            
+            # Sort by packet number 
+            relevant_events.sort(key=lambda x: (
+                int(x['packet_no']) if isinstance(x['packet_no'], str) and x['packet_no'].isdigit() else float('inf')
+            ))
+            
+            # Write events to CSV
+            for event in relevant_events:
+                writer.writerow([
+                    event['packet_no'],
+                    event.get('timestamp', ''),  # Time
+                    '',  # Source (would need to reread packet for this)
+                    '',  # Destination (would need to reread packet for this)
+                    '',  # Length (would need to reread packet for this)
+                    'BTSMP' if 'Pairing' in event['phase'] or 'Key Exchange' in event['phase'] else 'BTLE',  # Protocol
+                    f"{event['phase']} {event['key_type']}".strip(),  # Info
+                    event['device_mac'],
+                    event['phase'],
+                    event['key_type']
+                ])
+        
+        print(f"Authentication summary saved to {auth_output}")
+        print(f"Authentication overview saved to {summary_output}")
+        print(f"Packet-level authentication details saved to {packets_output}")
 
 
 if __name__ == "__main__":
