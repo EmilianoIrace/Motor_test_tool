@@ -684,7 +684,7 @@ class BluetoothSecurityAnalyzer:
                     self.devices[addr]['att_detected'] = True
                     
         elif layer_name == 'btl2cap':
-            # Track L2CAP protocol usage
+            # Track L2CAP protocol usage and decode flags
             addr = None
             if hasattr(layer, 'src'):
                 addr = layer.src
@@ -695,6 +695,14 @@ class BluetoothSecurityAnalyzer:
                 self.l2cap_protocol_detected.add(addr)
                 if addr in self.devices:
                     self.devices[addr]['l2cap_detected'] = True
+                    # Get and decode L2CAP flags if present
+                    if hasattr(layer, 'flags'):
+                        flags = layer.flags
+                        self.devices[addr]['l2cap_flags'] = flags
+                        # Decode L2CAP flags and store in device info
+                        decoded_flags = _decode_l2cap_flags(flags)
+                        self.devices[addr]['decoded_l2cap_flags'] = decoded_flags
+    
         elif layer_name == 'bthci_evt' and hasattr(layer, 'code'):
             self._extract_hci_evt_info(layer)
         elif layer_name == 'bthci_cmd' and hasattr(layer, 'opcode'):
@@ -866,10 +874,15 @@ class BluetoothSecurityAnalyzer:
                     'device': addr
                 })
             
-            # Check for security flags
+            # Check for security flags and decode them
             if hasattr(layer, 'authentication_requirements'):
                 auth_req = layer.authentication_requirements
                 self.devices[addr]['authentication_requirements'] = auth_req
+                
+                # Decode authentication requirements and store in device info
+                if hasattr(self, '_decode_smp_auth_requirements'):
+                    decoded_auth = _decode_smp_auth_requirements(auth_req)
+                    self.devices[addr]['decoded_auth_requirements'] = decoded_auth
                 
                 # Track authentication method
                 self.auth_methods[f"Auth Req: {auth_req}"] += 1
@@ -1809,7 +1822,7 @@ def main():
                                 else:
                                     protocol_info = f"PDU Type: {pdu_type}"
                             else:
-                                protocol_info = protocol
+                                protocol_info =protocol
                             
                             # Store in cache
                             packet_info_cache[packet_num] = {
