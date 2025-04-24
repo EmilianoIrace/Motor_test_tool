@@ -1305,22 +1305,21 @@ def main():
             # Define CSV writer
             writer = csv.writer(f)
             
-            # Write header row
+            # Write header row with more meaningful columns
             writer.writerow([
                 'MAC Address', 
                 'Device Name', 
-                'Connection Established', 
-                'Secure Pairing Established',
-                'Encryption Enabled',
-                'Security Level', 
-                'SMP Protocol Detected',
-                'LTK Exchanged',
-                'IRK Exchanged',
-                'CSRK Exchanged',
+                'Connection Type',
+                'Pairing Status',
+                'Encryption Status',
+                'Security Level (0-4)', 
+                'SMP Protocol',
+                'Key Exchange',
+                'Security Assessment',
                 'Security Issues'
             ])
             
-            # Write device data
+            # Write device data with more descriptive values
             for addr, device in auth_summary['devices'].items():
                 # Combine security issues into a single string
                 security_issues = "; ".join([f"{issue['severity']}: {issue['issue']}" 
@@ -1330,31 +1329,118 @@ def main():
                 smp_detected = addr in auth_summary['overall_findings'].get('smp_protocol_detected', 
                                analyzer.smp_protocol_detected)
                 
+                # Create more human-readable output values
+                connection_type = "Not Connected"
+                if device['connection_established']:
+                    connection_phases = []
+                    for phase, detected in device.get('connection_phases', {}).items():
+                        if detected:
+                            connection_phases.append(phase.replace('_', ' ').title())
+                    connection_type = f"Connected ({', '.join(connection_phases)})"
+                
+                pairing_status = "No Pairing"
+                if device['pairing_established']:
+                    pairing_status = "Secure Pairing Established"
+                elif smp_detected:
+                    pairing_status = "Pairing Attempted (Incomplete)"
+                
+                encryption_status = "Encrypted" if device['encryption_enabled'] else "UNENCRYPTED"
+                
+                # Describe key exchange
+                key_exchange = []
+                for key_type, exchanged in device.get('key_exchange', {}).items():
+                    if exchanged:
+                        key_exchange.append(key_type.replace('_exchanged', '').upper())
+                key_exchange_str = ", ".join(key_exchange) if key_exchange else "No Keys Exchanged"
+                
+                # Create security assessment based on device details
+                if device['security_level'] == 4:
+                    security_assessment = "SECURE (Authenticated pairing with encryption)"
+                elif device['security_level'] == 3:
+                    security_assessment = "MODERATE (Unauthenticated pairing with encryption)"
+                elif device['security_level'] == 2:
+                    security_assessment = "LOW (Pairing without encryption)"
+                elif device['security_level'] == 1:
+                    security_assessment = "INSECURE (Connection without pairing)"
+                else:
+                    security_assessment = "UNKNOWN"
+                
                 writer.writerow([
                     addr,
                     device['device_name'],
-                    device['connection_established'],
-                    device['pairing_established'],
-                    device['encryption_enabled'],
+                    connection_type,
+                    pairing_status,
+                    encryption_status,
                     device['security_level'],
-                    smp_detected,
-                    device['key_exchange']['ltk_exchanged'],
-                    device['key_exchange']['irk_exchanged'],
-                    device['key_exchange']['csrk_exchanged'],
+                    "Detected" if smp_detected else "Not Detected",
+                    key_exchange_str,
+                    security_assessment,
                     security_issues
                 ])
         
-        # Create a summary CSV with overall findings
+        # Create a better organized summary CSV with authentication status
         summary_output = args.output.replace('.json', '_auth_summary_overview.csv')
         with open(summary_output, 'w', newline='') as f:
             writer = csv.writer(f)
             
-            writer.writerow(['Metric', 'Value'])
-            writer.writerow(['Total Devices', auth_summary['overall_findings']['total_devices']])
-            writer.writerow(['Devices with SMP Protocol', auth_summary['overall_findings']['devices_with_smp_detected']])
-            writer.writerow(['Devices with Encryption', auth_summary['overall_findings']['devices_with_encryption']])
-            writer.writerow(['Devices without Pairing', auth_summary['overall_findings']['devices_without_pairing']])
-            writer.writerow(['Devices without Encryption', auth_summary['overall_findings']['devices_without_encryption']])
+            # Add informative headers
+            writer.writerow(['Security Analysis Overview'])
+            writer.writerow(['Generated on', datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+            writer.writerow(['PCAP File', analyzer.pcap_file])
+            writer.writerow([])
+            
+            # Main metrics
+            writer.writerow(['Key Security Metrics', 'Count', 'Percentage', 'Security Implication'])
+            
+            # Calculate percentages
+            total_devices = auth_summary['overall_findings']['total_devices']
+            smp_percent = 0
+            encryption_percent = 0
+            pairing_missing_percent = 0 
+            encryption_missing_percent = 0
+            
+            if total_devices > 0:
+                smp_percent = (auth_summary['overall_findings']['devices_with_smp_detected'] / total_devices) * 100
+                encryption_percent = (auth_summary['overall_findings']['devices_with_encryption'] / total_devices) * 100
+                pairing_missing_percent = (auth_summary['overall_findings']['devices_without_pairing'] / total_devices) * 100
+                encryption_missing_percent = (auth_summary['overall_findings']['devices_without_encryption'] / total_devices) * 100
+            
+            # Write detailed metrics with security implications
+            writer.writerow(['Total Devices', total_devices, '100%', 'Total devices detected in capture'])
+            writer.writerow(['Devices with SMP Protocol', 
+                          auth_summary['overall_findings']['devices_with_smp_detected'],
+                          f"{smp_percent:.1f}%",
+                          'SMP protocol indicates proper pairing intent'])
+            writer.writerow(['Devices with Encryption Enabled', 
+                          auth_summary['overall_findings']['devices_with_encryption'],
+                          f"{encryption_percent:.1f}%", 
+                          'Encrypted communication protects data from eavesdropping'])
+            writer.writerow(['Devices Missing Proper Pairing', 
+                          auth_summary['overall_findings']['devices_without_pairing'],
+                          f"{pairing_missing_percent:.1f}%", 
+                          'SECURITY RISK: Unauthorized devices can connect'])
+            writer.writerow(['Devices Missing Encryption', 
+                          auth_summary['overall_findings']['devices_without_encryption'],
+                          f"{encryption_missing_percent:.1f}%",
+                          'SECURITY RISK: Data can be intercepted'])
+            
+            # Add security assessment section
+            writer.writerow([])
+            writer.writerow(['Security Assessment'])
+            
+            # Overall security assessment based on findings
+            if encryption_missing_percent > 50:
+                writer.writerow(['Critical Security Risk', 'Most devices are operating without encryption'])
+            elif encryption_missing_percent > 0:
+                writer.writerow(['Significant Security Risk', 'Some devices are operating without encryption'])
+            
+            if pairing_missing_percent > 50:
+                writer.writerow(['Critical Security Risk', 'Most devices lack proper authentication mechanism'])
+            elif pairing_missing_percent > 0:
+                writer.writerow(['Significant Security Risk', 'Some devices lack proper authentication mechanism'])
+            
+            if encryption_missing_percent == 0 and pairing_missing_percent == 0 and total_devices > 0:
+                writer.writerow(['Secure Configuration', 'All detected devices use proper authentication and encryption'])
         
         print(f"Authentication summary saved to {auth_output}")
         print(f"Authentication overview saved to {summary_output}")
@@ -1461,16 +1547,139 @@ def main():
                 int(x['packet_no']) if isinstance(x['packet_no'], str) and x['packet_no'].isdigit() else float('inf')
             ))
             
-            # Write events to CSV
+            # Re-read packets to get full Wireshark-like information
+            packet_info_cache = {}
+            
+            try:
+                # Re-read capture file to get detailed packet info
+                cap = pyshark.FileCapture(analyzer.pcap_file)
+                
+                for packet in cap:
+                    try:
+                        packet_num = getattr(packet, 'number', 'unknown')
+                        if packet_num != 'unknown':
+                            # Cache packet information for use in CSV output
+                            protocol = getattr(packet, 'highest_layer', '')
+                            
+                            # Get packet length
+                            length = ""
+                            if hasattr(packet, 'length'):
+                                length = packet.length
+                            elif hasattr(packet, 'frame_info'):
+                                if hasattr(packet.frame_info, 'len'):
+                                    length = packet.frame_info.len
+                            
+                            # Get source and destination
+                            source = ""
+                            destination = ""
+                            
+                            # Try different layers to get source/destination
+                            if hasattr(packet, 'btle'):
+                                if hasattr(packet.btle, 'advertising_address'):
+                                    source = packet.btle.advertising_address
+                                if hasattr(packet.btle, 'scanning_address'):
+                                    destination = packet.btle.scanning_address
+                            elif hasattr(packet, 'bluetooth'):
+                                if hasattr(packet.bluetooth, 'src_bd_addr'):
+                                    source = packet.bluetooth.src_bd_addr
+                                if hasattr(packet.bluetooth, 'dst_bd_addr'):
+                                    destination = packet.bluetooth.dst_bd_addr
+                            elif hasattr(packet, 'btatt'):
+                                if hasattr(packet.btatt, 'src'):
+                                    source = packet.btatt.src
+                                if hasattr(packet.btatt, 'dst'):
+                                    destination = packet.btatt.dst
+                            elif hasattr(packet, 'btl2cap'):
+                                if hasattr(packet.btl2cap, 'src'):
+                                    source = packet.btl2cap.src
+                                if hasattr(packet.btl2cap, 'dst'):
+                                    destination = packet.btl2cap.dst
+                            
+                            # Determine detailed protocol info
+                            if hasattr(packet, 'btsmp') and protocol in ['BTSMP', 'SMP']:
+                                protocol = 'BTSMP'
+                                if hasattr(packet.btsmp, 'opcode'):
+                                    # Map SMP opcodes to human-readable descriptions
+                                    smp_opcodes = {
+                                        '0': 'Reserved',
+                                        '1': 'Pairing Request',
+                                        '2': 'Pairing Response',
+                                        '3': 'Pairing Confirm',
+                                        '4': 'Pairing Random',
+                                        '5': 'Pairing Failed',
+                                        '6': 'Encryption Information (LTK)',
+                                        '7': 'Identity Information (IRK)',
+                                        '8': 'Identity Address Information',
+                                        '9': 'Signing Information (CSRK)',
+                                        '10': 'Security Request',
+                                        '11': 'Pairing Public Key',
+                                        '12': 'Pairing DHKey Check'
+                                    }
+                                    opcode = packet.btsmp.opcode.replace('0x', '')
+                                    if opcode in smp_opcodes:
+                                        protocol_info = f"SMP {smp_opcodes[opcode]}"
+                                    else:
+                                        protocol_info = f"SMP Opcode: {opcode}"
+                                else:
+                                    protocol_info = "SMP Protocol"
+                            elif hasattr(packet, 'btle') and hasattr(packet.btle, 'advertising_header_pdu_type'):
+                                protocol = 'BTLE'
+                                # Map PDU types to human-readable descriptions
+                                pdu_types = {
+                                    '0': 'ADV_IND (Connectable undirected advertising)',
+                                    '1': 'ADV_DIRECT_IND (Connectable directed advertising)',
+                                    '2': 'SCAN_REQ (Scan request)',
+                                    '3': 'SCAN_RSP (Scan response)',
+                                    '4': 'CONNECT_REQ (Connect request)',
+                                    '5': 'ADV_SCAN_IND (Scannable undirected advertising)',
+                                    '6': 'ADV_NONCONN_IND (Non-connectable undirected advertising)'
+                                }
+                                pdu_type = packet.btle.advertising_header_pdu_type
+                                if pdu_type in pdu_types:
+                                    protocol_info = pdu_types[pdu_type]
+                                else:
+                                    protocol_info = f"PDU Type: {pdu_type}"
+                            else:
+                                protocol_info = protocol
+                            
+                            # Store in cache
+                            packet_info_cache[packet_num] = {
+                                'source': source,
+                                'destination': destination,
+                                'length': length,
+                                'protocol': protocol,
+                                'info': protocol_info,
+                                'timestamp': getattr(packet, 'sniff_timestamp', '')
+                            }
+                    except Exception as e:
+                        logger.debug(f"Error caching packet info: {str(e)}")
+                        continue
+            except Exception as e:
+                logger.warning(f"Error reading capture file for detailed packet info: {str(e)}")
+            
+            # Write events to CSV with more detailed information
             for event in relevant_events:
+                packet_num = event['packet_no']
+                packet_details = packet_info_cache.get(packet_num, {})
+                
+                # Determine protocol type based on packet info or event phase
+                protocol = packet_details.get('protocol', '')
+                if not protocol:
+                    protocol = 'BTSMP' if 'Pairing' in event['phase'] or 'Key Exchange' in event['phase'] else 'BTLE'
+                
+                # Construct detailed info field
+                info = packet_details.get('info', '')
+                if not info:
+                    info = f"{event['phase']} {event['key_type']}".strip()
+                
                 writer.writerow([
-                    event['packet_no'],
-                    event.get('timestamp', ''),  # Time
-                    '',  # Source (would need to reread packet for this)
-                    '',  # Destination (would need to reread packet for this)
-                    '',  # Length (would need to reread packet for this)
-                    'BTSMP' if 'Pairing' in event['phase'] or 'Key Exchange' in event['phase'] else 'BTLE',  # Protocol
-                    f"{event['phase']} {event['key_type']}".strip(),  # Info
+                    packet_num,
+                    packet_details.get('timestamp', event.get('timestamp', '')),
+                    packet_details.get('source', event['device_mac']),
+                    packet_details.get('destination', ''),
+                    packet_details.get('length', ''),
+                    protocol,
+                    info,
                     event['device_mac'],
                     event['phase'],
                     event['key_type']
