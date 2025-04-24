@@ -42,6 +42,11 @@ class BluetoothSecurityAnalyzer:
         # Track all device communication partners
         self.communication_map = defaultdict(set)
         
+        # Track connection and pairing phases
+        self.connection_phases = {}
+        self.pairing_phases = {}
+        self.smp_protocol_detected = set()  # Set of devices where SMP was detected
+        
     def analyze(self):
         """Main analysis function"""
         try:
@@ -195,6 +200,7 @@ class BluetoothSecurityAnalyzer:
         """Process BLE specific packets"""
         if hasattr(packet, 'btle'):
             # Extract advertising address if available
+            addr = None
             if hasattr(packet.btle, 'advertising_address'):
                 addr = packet.btle.advertising_address
                 self._register_device(addr)
@@ -211,6 +217,40 @@ class BluetoothSecurityAnalyzer:
                         self._register_vulnerability("Device using public address - privacy concern", 
                                                   addr, severity=2)
             
+            # Detect connection establishment phases
+            if hasattr(packet.btle, 'advertising_header_pdu_type'):
+                pdu_type = packet.btle.advertising_header_pdu_type
+                
+                # ADV_IND (0) - Connectable undirected advertising
+                if pdu_type == '0':
+                    if addr:
+                        self._track_connection_phase(packet, 'advertisement', addr)
+                
+                # SCAN_REQ (2) - Scan request
+                elif pdu_type == '2':
+                    if addr:
+                        self._track_connection_phase(packet, 'scan_request', addr)
+                
+                # SCAN_RSP (3) - Scan response
+                elif pdu_type == '3':
+                    if addr:
+                        self._track_connection_phase(packet, 'scan_response', addr)
+                
+                # CONNECT_REQ (5) - Connection request
+                elif pdu_type == '5':
+                    if addr:
+                        self._track_connection_phase(packet, 'connection_request', addr)
+            
+            # Check for HCI connection complete event
+            if hasattr(packet, 'bthci_evt') and hasattr(packet.bthci_evt, 'code'):
+                if packet.bthci_evt.code == '3e':  # LE Meta
+                    if hasattr(packet.bthci_evt, 'le_meta_subevent'):
+                        if packet.bthci_evt.le_meta_subevent == '1':  # LE Connection Complete
+                            # Get the device address from the event
+                            if hasattr(packet.bthci_evt, 'bd_addr'):
+                                le_addr = packet.bthci_evt.bd_addr
+                                self._track_connection_phase(packet, 'connection_complete', le_addr)
+            
             # Check for encrypted data
             if hasattr(packet.btle, 'data_header_llid'):
                 # LLID of 3 often indicates encrypted data
@@ -222,11 +262,11 @@ class BluetoothSecurityAnalyzer:
             
             # Analyze advertising data
             if hasattr(packet.btle, 'advertising_data'):
-                self._analyze_advertising_data(packet, addr if 'addr' in locals() else None)
+                self._analyze_advertising_data(packet, addr)
             
             # Check for GATT operations
             if hasattr(packet, 'btatt'):
-                self._analyze_gatt_operations(packet, addr if 'addr' in locals() else None)
+                self._analyze_gatt_operations(packet, addr)
     
     def _analyze_non_bt_protocol(self, packet, device_mac):
         """Analyze non-Bluetooth protocols used by known Bluetooth devices"""
@@ -524,46 +564,129 @@ class BluetoothSecurityAnalyzer:
     
     def _extract_smp_info(self, layer):
         """Extract Security Manager Protocol information"""
-        # Check pairing method
-        if hasattr(layer, 'io_capability'):
-            io_cap = layer.io_capability
-            
-            # Get associated device if possible
-            addr = None
-            if hasattr(layer, 'bd_addr'):
-                addr = layer.bd_addr
-            
-            if addr:
-                self.devices[addr]['pairing_method'] = io_cap
-                self.security_events.append({
-                    'type': 'pairing_io_capability',
-                    'device': addr,
-                    'capability': io_cap
-                })
-                
-                # Track authentication method
-                self.auth_methods[f"IO Capability: {io_cap}"] += 1
-                
-                # Check for Just Works pairing (vulnerable to MITM)
-                if io_cap == '0x03' or io_cap == '3':  # NoInputNoOutput
-                    self._register_vulnerability("Using 'Just Works' pairing - vulnerable to MITM attacks", 
-                                               addr, severity=5)
+        # Get device address
+        addr = None
+        if hasattr(layer, 'bd_addr'):
+            addr = layer.bd_addr
         
-        # Check for encryption info
+        # Add to SMP detected devices if we have an address
+        if addr:
+            self.smp_protocol_detected.add(addr)
+            
+        # Identify SMP command code to track pairing process phases
+        if hasattr(layer, 'opcode'):
+            opcode = layer.opcode
+            
+            # Security Request (0x0B)
+            if opcode == '0x0b' or opcode == '11':
+                if addr:
+                    self._track_pairing_phase(None, 'security_request', addr)
+                    
+                    # Check requested security level
+                    if hasattr(layer, 'authentication'):
+                        auth_flags = int(layer.authentication, 16)
+                        self.pairing_phases[addr]['requested_security_level'] = auth_flags
+            
+            # Pairing Request (0x01)
+            elif opcode == '0x01' or opcode == '1':
+                if addr:
+                    self._track_pairing_phase(None, 'pairing_request', addr)
+                    
+                    # Store pairing parameters
+                    if hasattr(layer, 'io_capability'):
+                        self.devices[addr]['pairing_method'] = layer.io_capability
+                        
+                    if hasattr(layer, 'oob_data_flag'):
+                        self.pairing_phases[addr]['oob_data'] = layer.oob_data_flag
+                        
+                    if hasattr(layer, 'auth_req'):
+                        self.pairing_phases[addr]['auth_requirements'] = layer.auth_req
+                        
+                    # Check for MITM protection
+                    if hasattr(layer, 'auth_req'):
+                        auth_req = int(layer.auth_req, 16)
+                        mitm_flag = (auth_req & 0x04) != 0
+                        self.pairing_phases[addr]['mitm_protection'] = mitm_flag
+                        
+                        if not mitm_flag:
+                            self._register_vulnerability("No MITM protection in pairing request", 
+                                                      addr, severity=4)
+            
+            # Pairing Response (0x02)
+            elif opcode == '0x02' or opcode == '2':
+                if addr:
+                    self._track_pairing_phase(None, 'pairing_response', addr)
+                    
+                    # Check IO capability for pairing method
+                    if hasattr(layer, 'io_capability'):
+                        io_cap = layer.io_capability
+                        self.pairing_phases[addr]['responder_io_capability'] = io_cap
+                        
+                        # Track authentication method
+                        self.auth_methods[f"IO Capability: {io_cap}"] += 1
+                        
+                        # Check for Just Works pairing (vulnerable to MITM)
+                        if io_cap == '0x03' or io_cap == '3':  # NoInputNoOutput
+                            self._register_vulnerability("Using 'Just Works' pairing - vulnerable to MITM attacks", 
+                                                      addr, severity=5)
+            
+            # Pairing Confirm (0x03) - indicates secure connection proceeding
+            elif opcode == '0x03' or opcode == '3':
+                if addr:
+                    self.pairing_phases[addr]['pairing_confirm'] = True
+                    self.security_events.append({
+                        'type': 'pairing_confirm',
+                        'device': addr
+                    })
+            
+            # Encryption Information (0x06) - indicates LTK exchange
+            elif opcode == '0x06' or opcode == '6':
+                if addr:
+                    self.pairing_phases[addr]['ltk_exchanged'] = True
+                    self.pairing_phases[addr]['key_distribution'] = True
+                    self._track_pairing_phase(None, 'key_distribution', addr)
+                    self.devices[addr]['has_ltk'] = True
+                    
+                    self.security_events.append({
+                        'type': 'ltk_exchange',
+                        'device': addr
+                    })
+            
+            # Identity Information (0x07) - indicates IRK exchange for privacy
+            elif opcode == '0x07' or opcode == '7':
+                if addr:
+                    self.pairing_phases[addr]['irk_exchanged'] = True
+                    self.security_events.append({
+                        'type': 'irk_exchange',
+                        'device': addr
+                    })
+                    
+            # Identity Address Information (0x08)
+            elif opcode == '0x08' or opcode == '8':
+                if addr:
+                    if hasattr(layer, 'identity_address_type'):
+                        id_type = layer.identity_address_type
+                        self.devices[addr]['identity_address_type'] = id_type
+                        
+                        if id_type == '0':  # Public address
+                            self._register_vulnerability("Using public identity address with LTK - privacy concern", 
+                                                      addr, severity=2)
+                                                      
+            # Signing Information (0x09) - indicates CSRK exchange
+            elif opcode == '0x09' or opcode == '9':
+                if addr:
+                    self.pairing_phases[addr]['csrk_exchanged'] = True
+                    self.security_events.append({
+                        'type': 'csrk_exchange',
+                        'device': addr
+                    })
+        
+        # Check for long-term key presence from pre-existing code
         if hasattr(layer, 'ltk'):
             # Long Term Key present
-            if hasattr(layer, 'bd_addr'):
-                addr = layer.bd_addr
+            if addr:
                 self.devices[addr]['has_ltk'] = True
-                
-                # Track if it's using a resolvable address for privacy
-                if hasattr(layer, 'identity_address_type'):
-                    id_type = layer.identity_address_type
-                    self.devices[addr]['identity_address_type'] = id_type
-                    
-                    if id_type == '0':  # Public address
-                        self._register_vulnerability("Using public identity address with LTK - privacy concern", 
-                                                   addr, severity=2)
+                self.pairing_phases[addr]['ltk_exchanged'] = True
     
     def _extract_hci_evt_info(self, layer):
         """Extract info from HCI Event packets"""
@@ -888,6 +1011,205 @@ class BluetoothSecurityAnalyzer:
         analyzer.packets_analyzed = report.get("summary", {}).get("packets_analyzed", 0)
         
         return analyzer
+    
+    def _track_connection_phase(self, packet, phase, device_addr=None):
+        """
+        Track the connection establishment phases for BLE devices
+        Phases: Advertisement, Scan Request, Scan Response, Connection Request
+        """
+        if not device_addr:
+            device_addr = self._get_mac_from_packet(packet)
+            
+        if not device_addr:
+            return
+            
+        if device_addr not in self.connection_phases:
+            self.connection_phases[device_addr] = {
+                'advertisement': False,
+                'scan_request': False,
+                'scan_response': False,
+                'connection_request': False,
+                'connection_complete': False,
+                'first_seen': getattr(packet, 'sniff_timestamp', None),
+                'packet_numbers': {
+                    'advertisement': [],
+                    'scan_request': [],
+                    'scan_response': [],
+                    'connection_request': [],
+                    'connection_complete': []
+                }
+            }
+        
+        self.connection_phases[device_addr][phase] = True
+        packet_num = getattr(packet, 'number', 'unknown')
+        if packet_num != 'unknown':
+            self.connection_phases[device_addr]['packet_numbers'][phase].append(packet_num)
+        
+        # Record this as a security event for the timeline
+        self.security_events.append({
+            'type': f'connection_{phase}',
+            'device': device_addr,
+            'timestamp': getattr(packet, 'sniff_timestamp', None),
+            'packet_num': packet_num
+        })
+        
+        # If this is the connection complete event, we should note the connection handle
+        if phase == 'connection_complete' and hasattr(packet, 'bthci_evt'):
+            if hasattr(packet.bthci_evt, 'connection_handle'):
+                self.devices[device_addr]['connection_handle'] = packet.bthci_evt.connection_handle
+    
+    def _track_pairing_phase(self, packet, phase, device_addr=None):
+        """
+        Track the pairing process phases for BLE devices
+        Phases: Security Request, Pairing Request, Pairing Response, Key Distribution
+        """
+        if not device_addr:
+            device_addr = self._get_mac_from_packet(packet)
+            
+        if not device_addr:
+            return
+            
+        # Add device to SMP detected devices
+        self.smp_protocol_detected.add(device_addr)
+            
+        if device_addr not in self.pairing_phases:
+            self.pairing_phases[device_addr] = {
+                'security_request': False,
+                'pairing_request': False,
+                'pairing_response': False,
+                'key_distribution': False,
+                'encryption_enabled': False,
+                'ltk_exchanged': False,
+                'irk_exchanged': False,
+                'csrk_exchanged': False,
+                'security_level': 0,
+                'first_seen': getattr(packet, 'sniff_timestamp', None),
+                'packet_numbers': {
+                    'security_request': [],
+                    'pairing_request': [],
+                    'pairing_response': [],
+                    'key_distribution': [],
+                    'encryption_enabled': []
+                }
+            }
+        
+        self.pairing_phases[device_addr][phase] = True
+        packet_num = getattr(packet, 'number', 'unknown')
+        if packet_num != 'unknown':
+            self.pairing_phases[device_addr]['packet_numbers'][phase].append(packet_num)
+        
+        # Record this as a security event for the timeline
+        self.security_events.append({
+            'type': f'pairing_{phase}',
+            'device': device_addr,
+            'timestamp': getattr(packet, 'sniff_timestamp', None),
+            'packet_num': packet_num
+        })
+
+
+    def generate_authentication_summary(self):
+        """Generate a summary report focusing on the authentication and pairing process"""
+        summary = {
+            "devices": {},
+            "overall_findings": {
+                "devices_with_smp_detected": len(self.smp_protocol_detected),
+                "devices_with_encryption": sum(1 for _, info in self.devices.items() if info.get('encryption_enabled', False)),
+                "total_devices": len(self.devices)
+            }
+        }
+        
+        # Analyze each device's authentication process
+        for addr, device_info in self.devices.items():
+            device_summary = {
+                "device_name": device_info.get('device_name', 'Unknown Device'),
+                "mac_address": addr,
+                "packet_count": device_info.get('packet_count', 0),
+                "connection_established": False,
+                "pairing_established": False,
+                "encryption_enabled": device_info.get('encryption_enabled', False),
+                "security_level": 0,
+                "key_exchange": {
+                    "ltk_exchanged": False,
+                    "irk_exchanged": False,
+                    "csrk_exchanged": False
+                },
+                "connection_phases": {},
+                "pairing_phases": {},
+                "security_issues": []
+            }
+            
+            # Check connection establishment phases
+            if addr in self.connection_phases:
+                device_summary["connection_established"] = True
+                device_summary["connection_phases"] = {
+                    phase: self.connection_phases[addr].get(phase, False) 
+                    for phase in ['advertisement', 'scan_request', 'scan_response', 'connection_request', 'connection_complete']
+                }
+            
+            # Check pairing process phases
+            if addr in self.pairing_phases:
+                pairing_info = self.pairing_phases[addr]
+                device_summary["pairing_phases"] = {
+                    phase: pairing_info.get(phase, False)
+                    for phase in ['security_request', 'pairing_request', 'pairing_response', 'key_distribution']
+                }
+                
+                # Determine if pairing was established
+                if pairing_info.get('pairing_request', False) and pairing_info.get('pairing_response', False):
+                    device_summary["pairing_established"] = True
+                
+                # Check for key exchange
+                device_summary["key_exchange"]["ltk_exchanged"] = pairing_info.get('ltk_exchanged', False)
+                device_summary["key_exchange"]["irk_exchanged"] = pairing_info.get('irk_exchanged', False)
+                device_summary["key_exchange"]["csrk_exchanged"] = pairing_info.get('csrk_exchanged', False)
+                
+                # Determine security level (1-4)
+                if device_summary["pairing_established"]:
+                    if device_info.get('encryption_enabled', False):
+                        if pairing_info.get('mitm_protection', False):
+                            device_summary["security_level"] = 4  # Authenticated pairing with encryption
+                        else:
+                            device_summary["security_level"] = 3  # Unauthenticated pairing with encryption
+                    else:
+                        device_summary["security_level"] = 2  # Pairing without encryption
+                elif device_summary["connection_established"]:
+                    device_summary["security_level"] = 1  # Connection only, no pairing
+            
+            # Identify security issues
+            if device_summary["connection_established"] and not device_summary["pairing_established"]:
+                device_summary["security_issues"].append({
+                    "issue": "Connection without secure pairing",
+                    "severity": "High",
+                    "description": "Device establishes Bluetooth connection without secure pairing process, allowing unauthorized connections"
+                })
+            
+            if device_summary["connection_established"] and not device_summary["encryption_enabled"]:
+                device_summary["security_issues"].append({
+                    "issue": "Unencrypted communication",
+                    "severity": "Critical",
+                    "description": "Device communicates without encryption, exposing all data to eavesdropping"
+                })
+            
+            if addr in self.smp_protocol_detected:
+                if not device_summary["key_exchange"]["ltk_exchanged"]:
+                    device_summary["security_issues"].append({
+                        "issue": "SMP without LTK exchange",
+                        "severity": "High",
+                        "description": "Secure Manager Protocol detected but no Long Term Key exchanged"
+                    })
+            
+            # Add to the main summary
+            summary["devices"][addr] = device_summary
+            
+        # Generate overall findings
+        summary["overall_findings"]["devices_without_pairing"] = sum(
+            1 for d in summary["devices"].values() if d["connection_established"] and not d["pairing_established"]
+        )
+        summary["overall_findings"]["devices_without_encryption"] = sum(
+            1 for d in summary["devices"].values() if d["connection_established"] and not d["encryption_enabled"] 
+        )
+        
+        return summary
 
 
 def main():
@@ -896,6 +1218,7 @@ def main():
     parser.add_argument("pcap_file", help="Path to the PCAP file to analyze")
     parser.add_argument("--output", "-o", help="Output file for JSON report", default="bt_security_report.json")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    parser.add_argument("--auth-summary", "-a", action="store_true", help="Generate detailed authentication process summary")
     args = parser.parse_args()
     
     if args.verbose:
@@ -913,6 +1236,56 @@ def main():
     print(f"Risk score: {report['summary']['risk_score']:.2f}/100")
     print(f"Packets analyzed: {report['summary']['packets_analyzed']}")
     
+    # Generate authentication and pairing summary
+    auth_summary = analyzer.generate_authentication_summary()
+    
+    print("\n=== Authentication Process Summary ===")
+    print(f"Total devices: {auth_summary['overall_findings']['total_devices']}")
+    print(f"Devices with SMP protocol detected: {auth_summary['overall_findings']['devices_with_smp_detected']}")
+    print(f"Devices with encryption enabled: {auth_summary['overall_findings']['devices_with_encryption']}")
+    print(f"Devices without proper pairing: {auth_summary['overall_findings']['devices_without_pairing']}")
+    print(f"Devices without encryption: {auth_summary['overall_findings']['devices_without_encryption']}")
+    
+    # Print detailed pairing info for each device
+    print("\n=== Device Authentication Details ===")
+    for addr, device in auth_summary['devices'].items():
+        print(f"\nDevice: {addr}")
+        if device['device_name'] != 'Unknown Device':
+            print(f"  Name: {device['device_name']}")
+        
+        # Connection phases
+        print(f"  Connection established: {device['connection_established']}")
+        if device['connection_established'] and device['connection_phases']:
+            print("  Connection phases detected:")
+            for phase, detected in device['connection_phases'].items():
+                if detected:
+                    print(f"    - {phase.replace('_', ' ').title()}")
+        
+        # Pairing info
+        print(f"  Secure pairing established: {device['pairing_established']}")
+        if device['pairing_established'] and device['pairing_phases']:
+            print("  Pairing phases detected:")
+            for phase, detected in device['pairing_phases'].items():
+                if detected:
+                    print(f"    - {phase.replace('_', ' ').title()}")
+                    
+        # Security level and encryption
+        print(f"  Encryption enabled: {device['encryption_enabled']}")
+        print(f"  Security level: {device['security_level']} (0-4, 4 is highest)")
+        
+        # Key exchange
+        if any(device['key_exchange'].values()):
+            print("  Keys exchanged:")
+            for key_type, exchanged in device['key_exchange'].items():
+                if exchanged:
+                    print(f"    - {key_type.replace('_exchanged', '').upper()}")
+        
+        # Security issues
+        if device['security_issues']:
+            print("  Security issues:")
+            for issue in device['security_issues']:
+                print(f"    - [{issue['severity']}] {issue['issue']}")
+    
     print("\n=== Top Vulnerabilities ===")
     for vuln in sorted(report['vulnerabilities'], key=lambda v: v['severity'], reverse=True)[:5]:
         print(f"[Severity {vuln['severity']}] {vuln['description']} - Device: {vuln['device']}")
@@ -920,23 +1293,14 @@ def main():
     # Save detailed report to file
     analyzer.save_report(args.output)
     print(f"\nDetailed report saved to {args.output}")
-
-    # Print device information
-    print("\n=== Device Information ===")
-    for addr, device in report['devices'].items():
-        print(f"\nDevice: {addr}")
-        if 'device_name' in device:
-            print(f"  Name: {device['device_name']}")
-        print(f"  Encryption: {device['security_assessment']['encryption_status']}")
-        print(f"  Pairing Security: {device['security_assessment']['pairing_security']}")
-        
-        if device['vulnerabilities']:
-            print(f"  Vulnerabilities: {len(device['vulnerabilities'])}")
-            
-        if device['security_assessment']['recommendations']:
-            print("  Security Recommendations:")
-            for rec in device['security_assessment']['recommendations']:
-                print(f"   - {rec}")
+    
+    # Save authentication summary to a separate file if requested
+    if args.auth_summary:
+        auth_output = args.output.replace('.json', '_auth_summary.json')
+        with open(auth_output, 'w') as f:
+            import json
+            json.dump(auth_summary, f, indent=4)
+        print(f"Authentication summary saved to {auth_output}")
 
 
 if __name__ == "__main__":
