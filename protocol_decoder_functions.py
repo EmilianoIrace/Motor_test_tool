@@ -1,4 +1,4 @@
-def _decode_l2cap_flags(self, flags_hex):
+def _decode_l2cap_flags(flags_hex):
     """
     Decode L2CAP flags to extract security-related information
     
@@ -57,7 +57,7 @@ def _decode_l2cap_flags(self, flags_hex):
             'raw_value': flags_hex
         }
 
-def _decode_smp_auth_requirements(self, auth_req_hex):
+def _decode_smp_auth_requirements(auth_req_hex):
     """
     Decode SMP authentication requirements flags
     
@@ -122,7 +122,7 @@ def _decode_smp_auth_requirements(self, auth_req_hex):
             'raw_value': auth_req_hex
         }
 
-def _decode_smp_io_capability(self, io_cap_hex):
+def _decode_smp_io_capability(io_cap_hex):
     """
     Decode SMP IO Capability value
     
@@ -154,7 +154,7 @@ def _decode_smp_io_capability(self, io_cap_hex):
     
     return io_cap_mapping.get(io_cap_hex, f'Unknown IO Capability (0x{io_cap_hex})')
 
-def _decode_smp_key_distribution(self, key_dist_hex):
+def _decode_smp_key_distribution(key_dist_hex):
     """
     Decode SMP key distribution flags
     
@@ -199,7 +199,7 @@ def _decode_smp_key_distribution(self, key_dist_hex):
             'raw_value': key_dist_hex
         }
 
-def _decode_att_opcode(self, opcode_hex):
+def _decode_att_opcode(opcode_hex):
     """
     Decode ATT opcode and determine command type
     
@@ -284,7 +284,7 @@ def _decode_att_opcode(self, opcode_hex):
         'type': op_type
     }
 
-def _decode_att_permissions(self, perm_hex):
+def _decode_att_permissions(perm_hex):
     """
     Decode ATT attribute permissions
     
