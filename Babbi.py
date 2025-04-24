@@ -1296,11 +1296,68 @@ def main():
     
     # Save authentication summary to a separate file if requested
     if args.auth_summary:
-        auth_output = args.output.replace('.json', '_auth_summary.json')
-        with open(auth_output, 'w') as f:
-            import json
-            json.dump(auth_summary, f, indent=4)
+        # Save as CSV instead of JSON
+        auth_output = args.output.replace('.json', '_auth_summary.csv')
+        
+        # Generate CSV for devices
+        import csv
+        with open(auth_output, 'w', newline='') as f:
+            # Define CSV writer
+            writer = csv.writer(f)
+            
+            # Write header row
+            writer.writerow([
+                'MAC Address', 
+                'Device Name', 
+                'Connection Established', 
+                'Secure Pairing Established',
+                'Encryption Enabled',
+                'Security Level', 
+                'SMP Protocol Detected',
+                'LTK Exchanged',
+                'IRK Exchanged',
+                'CSRK Exchanged',
+                'Security Issues'
+            ])
+            
+            # Write device data
+            for addr, device in auth_summary['devices'].items():
+                # Combine security issues into a single string
+                security_issues = "; ".join([f"{issue['severity']}: {issue['issue']}" 
+                                           for issue in device['security_issues']])
+                
+                # Check if device address is in SMP detected set
+                smp_detected = addr in auth_summary['overall_findings'].get('smp_protocol_detected', 
+                               analyzer.smp_protocol_detected)
+                
+                writer.writerow([
+                    addr,
+                    device['device_name'],
+                    device['connection_established'],
+                    device['pairing_established'],
+                    device['encryption_enabled'],
+                    device['security_level'],
+                    smp_detected,
+                    device['key_exchange']['ltk_exchanged'],
+                    device['key_exchange']['irk_exchanged'],
+                    device['key_exchange']['csrk_exchanged'],
+                    security_issues
+                ])
+        
+        # Create a summary CSV with overall findings
+        summary_output = args.output.replace('.json', '_auth_summary_overview.csv')
+        with open(summary_output, 'w', newline='') as f:
+            writer = csv.writer(f)
+            
+            writer.writerow(['Metric', 'Value'])
+            writer.writerow(['Total Devices', auth_summary['overall_findings']['total_devices']])
+            writer.writerow(['Devices with SMP Protocol', auth_summary['overall_findings']['devices_with_smp_detected']])
+            writer.writerow(['Devices with Encryption', auth_summary['overall_findings']['devices_with_encryption']])
+            writer.writerow(['Devices without Pairing', auth_summary['overall_findings']['devices_without_pairing']])
+            writer.writerow(['Devices without Encryption', auth_summary['overall_findings']['devices_without_encryption']])
+        
         print(f"Authentication summary saved to {auth_output}")
+        print(f"Authentication overview saved to {summary_output}")
 
 
 if __name__ == "__main__":
